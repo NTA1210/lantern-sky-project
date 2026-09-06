@@ -27,8 +27,8 @@ jobs:
         run: python -m py_compile run.py backend/*.py tools/*.py
       - name: Generate all printable templates
         run: python tools/generate_template.py
-      - name: Verify printable templates are committed
-        run: git diff --exit-code -- print/
+      - name: Verify printable templates match committed artwork
+        run: python tools/verify_templates.py
       - name: Synthetic CV self-test
         run: python tools/self_test.py
       - name: JavaScript syntax check
