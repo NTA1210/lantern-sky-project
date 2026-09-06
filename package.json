@@ -1,0 +1,13 @@
+{
+  "name": "lantern-sky-project",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

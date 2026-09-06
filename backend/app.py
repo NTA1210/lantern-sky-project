@@ -15,7 +15,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from . import config
 from .processor import ScanError
 from .scanner import ScannerService
-from .storage import current_background_path, recent_lanterns
+from .storage import current_background_path, lantern_count, list_lanterns, recent_lanterns
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("lantern.app")
@@ -51,18 +51,24 @@ manager = Manager()
 
 @asynccontextmanager
 async def lifespan(app):
-    scanner.start()
+    config.initialize_runtime_dirs()
+    if not config.DISABLE_CAMERA:
+        scanner.start()
     try:
         yield
     finally:
-        scanner.stop()
+        if not config.DISABLE_CAMERA:
+            scanner.stop()
 
 
 app = FastAPI(title="Lantern Sky", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(config.FRONTEND_DIR)), name="static")
 app.mount("/templates", StaticFiles(directory=str(config.PRINT_DIR)), name="templates")
-# Only final, privacy-safe lantern PNGs are public. Raw camera/corrected images stay private.
-app.mount("/generated/lanterns", StaticFiles(directory=str(config.LANTERNS_DIR)), name="lanterns")
+app.mount(
+    "/generated/lanterns",
+    StaticFiles(directory=str(config.LANTERNS_DIR), check_dir=False),
+    name="lanterns",
+)
 
 
 def _background_url() -> str | None:
@@ -129,11 +135,14 @@ async def scan():
             raise HTTPException(500, detail="Scan failed. Xem log trên máy Control để biết chi tiết.") from exc
 
         url = f"/generated/lanterns/{result.lantern_path.name}"
+        total_count = lantern_count()
         payload = {
             "type": "lantern_created",
             "id": result.id,
             "url": url,
             "variant": result.variant_key,
+            "variantLabel": result.variant_label,
+            "totalCount": total_count,
         }
         await manager.broadcast(payload)
         return {
@@ -145,6 +154,7 @@ async def scan():
             "variant": result.variant_key,
             "variantLabel": result.variant_label,
             "quality": result.quality,
+            "totalCount": total_count,
         }
 
 
@@ -152,7 +162,15 @@ async def scan():
 async def demo():
     demo_id = f"demo-{uuid4().hex[:8]}"
     await manager.broadcast(
-        {"type": "lantern_created", "id": demo_id, "url": "/static/sample_lantern.png", "demo": True}
+        {
+            "type": "lantern_created",
+            "id": demo_id,
+            "url": "/static/sample_lantern.png",
+            "variant": "classic",
+            "variantLabel": "Classic",
+            "demo": True,
+            "totalCount": lantern_count(),
+        }
     )
     return {"ok": True, "id": demo_id}
 
@@ -231,9 +249,19 @@ def recent(limit: int = 12):
     return recent_lanterns(limit)
 
 
+@app.get("/api/lanterns")
+def lanterns():
+    return {"totalCount": lantern_count(), "lanterns": list_lanterns()}
+
+
 @app.get("/api/display-state")
 def display_state():
-    return {"backgroundUrl": _background_url(), "lanterns": recent_lanterns(12)}
+    lanterns = list_lanterns()
+    return {
+        "backgroundUrl": _background_url(),
+        "lanterns": lanterns,
+        "totalCount": len(lanterns),
+    }
 
 
 @app.websocket("/ws")

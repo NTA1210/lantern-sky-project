@@ -21,20 +21,26 @@ ORIGINAL_DIR = DIAGNOSTICS_DIR / "original"
 CORRECTED_DIR = DIAGNOSTICS_DIR / "corrected"
 BACKGROUND_DIR = RUNTIME_DIR / "backgrounds"
 
-for directory in (
-    RUNTIME_DIR,
-    LANTERNS_DIR,
-    DIAGNOSTICS_DIR,
-    ORIGINAL_DIR,
-    CORRECTED_DIR,
-    BACKGROUND_DIR,
-    PRINT_DIR,
-):
-    directory.mkdir(parents=True, exist_ok=True)
+
+def initialize_runtime_dirs() -> None:
+    """Create mutable runtime directories explicitly during application startup."""
+    for directory in (
+        RUNTIME_DIR,
+        LANTERNS_DIR,
+        DIAGNOSTICS_DIR,
+        ORIGINAL_DIR,
+        CORRECTED_DIR,
+        BACKGROUND_DIR,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+
 
 # Control and Display run on the same laptop, so localhost is the safe default.
 HOST = os.environ.get("LANTERN_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8000"))
+# Browser E2E does not need physical video hardware. This is intentionally
+# opt-in so production/event startup behavior remains unchanged.
+DISABLE_CAMERA = _env_bool("LANTERN_DISABLE_CAMERA", False)
 
 CAMERA_INDEX = int(os.environ.get("LANTERN_CAMERA_INDEX", "0"))
 CAMERA_WIDTH = int(os.environ.get("LANTERN_CAMERA_WIDTH", "3840"))
@@ -44,6 +50,8 @@ CAMERA_USE_MJPG = _env_bool("LANTERN_CAMERA_MJPG", True)
 CAMERA_RECONNECT_SECONDS = float(os.environ.get("LANTERN_CAMERA_RECONNECT_SECONDS", "1.5"))
 CAMERA_READ_FAILURE_LIMIT = int(os.environ.get("LANTERN_CAMERA_READ_FAILURE_LIMIT", "8"))
 CAMERA_PROBE_MAX = int(os.environ.get("LANTERN_CAMERA_PROBE_MAX", "6"))
+PREVIEW_MAX_WIDTH = int(os.environ.get("LANTERN_PREVIEW_MAX_WIDTH", "1280"))
+PREVIEW_FPS = float(os.environ.get("LANTERN_PREVIEW_FPS", "12"))
 
 CANONICAL_WIDTH = int(os.environ.get("LANTERN_CANONICAL_WIDTH", "1600"))
 CANONICAL_HEIGHT = round(CANONICAL_WIDTH * 297 / 210)
@@ -51,8 +59,9 @@ JPEG_PREVIEW_QUALITY = 82
 JPEG_MASTER_QUALITY = 97
 PNG_COMPRESSION = 3
 
+# /api/recent remains bounded for Control/diagnostics. The projector display
+# loads the complete persisted history from /api/display-state.
 MAX_RECENT_LANTERNS = 40
-MAX_STORED_LANTERNS = int(os.environ.get("LANTERN_MAX_STORED", "240"))
 KEEP_DIAGNOSTICS = _env_bool("LANTERN_KEEP_DIAGNOSTICS", False)
 
 MAX_BACKGROUND_BYTES = int(os.environ.get("LANTERN_MAX_BACKGROUND_BYTES", str(20 * 1024 * 1024)))

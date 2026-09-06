@@ -111,7 +111,8 @@ scan.onclick = async () => {
     result.src = `${data.lanternUrl}?t=${Date.now()}`;
     const warnings = data.quality?.warnings || [];
     const warningText = warnings.length ? ` Cảnh báo chất lượng: ${warnings.join(' ')}` : '';
-    message(`Đã tạo ${data.variantLabel || 'lantern'} ${data.id} và gửi sang Display.${warningText}`, warnings.length ? '' : 'success');
+    const totalText = Number.isFinite(Number(data.totalCount)) ? ` Tổng số đèn: ${Number(data.totalCount).toLocaleString('vi-VN')}.` : '';
+    message(`Đã tạo ${data.variantLabel || 'lantern'} ${data.id} và gửi sang Display.${totalText}${warningText}`, warnings.length ? '' : 'success');
   } catch (error) {
     message(error.message, 'error');
   } finally {
