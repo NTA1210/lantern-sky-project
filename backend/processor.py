@@ -12,7 +12,7 @@ import numpy as np
 
 from . import config
 from .layout import LanternVariant, create_lantern_mask, expected_marker_corners, identify_variant, lantern_roi
-from .storage import atomic_imwrite, prune_scan_storage
+from .storage import atomic_imwrite, lantern_filename
 
 logger = logging.getLogger("lantern.processor")
 
@@ -153,7 +153,7 @@ class LanternProcessor:
         lantern = self.extract_lantern(rectified, variant.key)
 
         scan_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
-        lantern_path = config.LANTERNS_DIR / f"{scan_id}.png"
+        lantern_path = config.LANTERNS_DIR / lantern_filename(scan_id, variant.key)
         atomic_imwrite(lantern_path, lantern, [cv2.IMWRITE_PNG_COMPRESSION, config.PNG_COMPRESSION])
 
         original_path = None
@@ -164,7 +164,9 @@ class LanternProcessor:
             atomic_imwrite(original_path, frame, [cv2.IMWRITE_JPEG_QUALITY, config.JPEG_MASTER_QUALITY])
             atomic_imwrite(corrected_path, rectified, [cv2.IMWRITE_PNG_COMPRESSION, config.PNG_COMPRESSION])
 
-        prune_scan_storage()
+        # Event history is append-only: successfully scanned lantern PNGs are
+        # never deleted automatically. Cleanup, if desired, is an explicit
+        # between-event maintenance action.
         duration_ms = round((time.perf_counter() - started) * 1000, 1)
         logger.info(
             "scan_completed id=%s variant=%s duration_ms=%s focus=%s",

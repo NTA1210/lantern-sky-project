@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 .DS_Store
 
+# Node / browser E2E
+node_modules/
+.npm-cache/
+playwright-report/
+test-results/
+.playwright-browsers/
+
 # Runtime/event data
 runtime/
 generated/

@@ -32,7 +32,11 @@ class ScannerStatus:
 
 class ScannerService:
     def __init__(self):
-        self.processor = LanternProcessor()
+        # OpenCV detector instances are owned by separate execution threads.
+        # Preview detection runs on the camera thread; final scans run in a
+        # FastAPI worker thread behind the API scan lock.
+        self.preview_processor = LanternProcessor()
+        self.scan_processor = LanternProcessor()
         self.cap = None
         self.thread = None
         self.running = False
@@ -60,6 +64,19 @@ class ScannerService:
         if system == "Linux":
             return [cv2.CAP_V4L2, None]
         return [None]
+
+    @staticmethod
+    def _preview_frame(frame):
+        height, width = frame.shape[:2]
+        max_width = max(320, config.PREVIEW_MAX_WIDTH)
+        if width <= max_width:
+            return frame.copy()
+        scale = max_width / width
+        return cv2.resize(
+            frame,
+            (max_width, max(1, round(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
 
     def _open(self):
         for backend in self._backend_candidates():
@@ -133,6 +150,9 @@ class ScannerService:
 
     def _loop(self):
         read_failures = 0
+        last_preview_at = 0.0
+        preview_interval = 1.0 / max(1.0, config.PREVIEW_FPS)
+
         while self.running:
             if self.cap is None or not self.cap.isOpened():
                 camera = self._open()
@@ -149,6 +169,7 @@ class ScannerService:
                 with self.lock:
                     self.error = None
                 read_failures = 0
+                last_preview_at = 0.0
 
             ok, frame = self.cap.read()
             if not ok or frame is None:
@@ -165,28 +186,40 @@ class ScannerService:
                 continue
 
             read_failures = 0
+            with self.lock:
+                # Keep the newest full-resolution frame for the final scan.
+                # Preview processing below is intentionally decimated.
+                self.frame = frame
+                self.error = None
+                self.camera_open = True
+
+            now = time.monotonic()
+            if now - last_preview_at < preview_interval:
+                continue
+
             try:
-                detected = self.processor.detect(frame)
-                preview = self._decorate(frame.copy(), detected)
+                preview = self._preview_frame(frame)
+                detected = self.preview_processor.detect(preview)
+                preview = self._decorate(preview, detected)
                 ok_jpeg, jpeg = cv2.imencode(
                     ".jpg",
                     preview,
                     [cv2.IMWRITE_JPEG_QUALITY, config.JPEG_PREVIEW_QUALITY],
                 )
                 with self.lock:
-                    self.frame = frame
                     self.detected = detected
                     self.preview = jpeg.tobytes() if ok_jpeg else None
                     self.error = None
                     self.camera_open = True
+                last_preview_at = now
             except Exception as exc:
                 logger.exception("camera_processing_error")
                 with self.lock:
                     self.error = f"Camera processing error: {exc}"
 
     def _decorate(self, frame, detected):
-        partial = self.processor.identify_variant(detected, require_complete=False)
-        complete = self.processor.identify_variant(detected, require_complete=True)
+        partial = self.preview_processor.identify_variant(detected, require_complete=False)
+        complete = self.preview_processor.identify_variant(detected, require_complete=True)
         ready = complete is not None
         expected = partial.marker_ids if partial else ()
         color = (80, 220, 100) if ready else (40, 170, 255)
@@ -223,8 +256,8 @@ class ScannerService:
             camera_open = self.camera_open
             width, height, fps = self.w, self.h, self.fps
             error = self.error
-        complete = self.processor.identify_variant(marker_ids, require_complete=True)
-        partial = complete or self.processor.identify_variant(marker_ids, require_complete=False)
+        complete = self.preview_processor.identify_variant(marker_ids, require_complete=True)
+        partial = complete or self.preview_processor.identify_variant(marker_ids, require_complete=False)
         return ScannerStatus(
             camera_open=camera_open,
             camera_index=config.CAMERA_INDEX,
@@ -244,7 +277,7 @@ class ScannerService:
             if self.frame is None:
                 raise ScanError("Chưa có frame từ camera.")
             frame = self.frame.copy()
-        return self.processor.process(frame)
+        return self.scan_processor.process(frame)
 
     def mjpeg_generator(self):
         while self.running:
@@ -252,4 +285,4 @@ class ScannerService:
                 preview = self.preview
             if preview:
                 yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + preview + b"\r\n"
-            time.sleep(1 / 24)
+            time.sleep(1 / max(1.0, config.PREVIEW_FPS))
