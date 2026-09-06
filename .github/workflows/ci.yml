@@ -1,0 +1,23 @@
+name: Lantern Sky CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Syntax check
+        run: python -m py_compile run.py backend/*.py tools/*.py
+      - name: Generate all printable templates
+        run: python tools/generate_template.py
+      - name: Synthetic CV self-test
+        run: python tools/self_test.py

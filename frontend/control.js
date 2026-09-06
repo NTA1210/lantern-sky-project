@@ -4,6 +4,7 @@ const demo = document.querySelector('#demoButton');
 const msg = document.querySelector('#message');
 const result = document.querySelector('#resultImage');
 const meta = document.querySelector('#cameraMeta');
+const templateMeta = document.querySelector('#templateMeta');
 const cameraWrap = document.querySelector('#cameraWrap');
 const cameraEmpty = document.querySelector('#cameraEmpty');
 const backgroundInput = document.querySelector('#backgroundInput');
@@ -32,28 +33,46 @@ function setBadge(text, state = '') {
   badge.className = state ? `badge ${state}` : 'badge';
 }
 
+function updateMarkerSlots(requiredIds, found) {
+  markers.forEach((marker, index) => {
+    const markerId = requiredIds[index];
+    marker.textContent = Number.isInteger(markerId) ? markerId : '–';
+    marker.classList.toggle('found', Number.isInteger(markerId) && found.has(markerId));
+  });
+}
+
 async function poll() {
   try {
     const response = await fetch('/api/status', { cache: 'no-store' });
     const data = await response.json();
     const found = new Set(data.markerIds || []);
-
-    markers.forEach((marker) => {
-      marker.classList.toggle('found', found.has(Number(marker.dataset.id)));
-    });
+    const requiredIds = data.requiredMarkerIds || [];
+    updateMarkerSlots(requiredIds, found);
 
     const [width, height] = data.resolution || [0, 0];
+    const [requestedWidth, requestedHeight] = data.requestedResolution || [0, 0];
     scan.disabled = true;
 
     if (!data.cameraOpen) {
-      meta.textContent = 'Camera unavailable';
+      meta.textContent = `Camera #${data.cameraIndex ?? 0} unavailable`;
+      templateMeta.textContent = 'Waiting for camera...';
       setBadge('Camera error', 'error');
-      setPreviewState('unavailable', 'Camera unavailable', 'Check camera permission or LANTERN_CAMERA_INDEX, then restart the app.');
+      setPreviewState(
+        'unavailable',
+        'Camera unavailable',
+        'Kiểm tra cáp/quyền Camera hoặc LANTERN_CAMERA_INDEX. App sẽ tự reconnect.'
+      );
       message(data.error || 'Không mở được camera.', 'error');
       return;
     }
 
-    meta.textContent = `${width} x ${height}${data.fps ? ` · ${data.fps.toFixed(0)} FPS` : ''}`;
+    const requested = requestedWidth && requestedHeight && (requestedWidth !== width || requestedHeight !== height)
+      ? ` · requested ${requestedWidth} x ${requestedHeight}`
+      : '';
+    meta.textContent = `Camera #${data.cameraIndex ?? 0} · ${width} x ${height}${requested}${data.fps ? ` · ${data.fps.toFixed(0)} FPS` : ''}`;
+    templateMeta.textContent = data.variantLabel
+      ? `Template: ${data.variantLabel} · markers ${requiredIds.join(', ')}`
+      : 'Đưa một trong bốn template vào camera.';
     setPreviewState('ready');
 
     if (data.error) {
@@ -63,17 +82,19 @@ async function poll() {
     }
 
     if (data.readyToScan) {
-      setBadge('Ready to scan', 'ready');
+      setBadge(`Ready · ${data.variantLabel || 'Template'}`, 'ready');
       scan.disabled = false;
-      message('Đủ marker. Có thể scan lantern.');
+      message(`Đủ marker cho mẫu ${data.variantLabel || ''}. Có thể scan lantern.`);
       return;
     }
 
-    setBadge(`Markers ${found.size}/4`);
-    message('Đặt toàn bộ template trong khung hình, không che marker 0-3.');
+    const foundExpected = requiredIds.filter((id) => found.has(id)).length;
+    setBadge(requiredIds.length ? `Markers ${foundExpected}/4` : 'Find template');
+    message('Đặt toàn bộ template trong khung hình và không che bốn marker góc.');
   } catch (error) {
     scan.disabled = true;
     meta.textContent = 'Server disconnected';
+    templateMeta.textContent = 'Waiting for server...';
     setBadge('Disconnected', 'error');
     setPreviewState('unavailable', 'Server disconnected', 'Make sure the Lantern Sky app is still running.');
     message('Không kết nối được server.', 'error');
@@ -88,7 +109,9 @@ scan.onclick = async () => {
     const data = await response.json();
     if (!response.ok) throw Error(data.detail || 'Scan failed');
     result.src = `${data.lanternUrl}?t=${Date.now()}`;
-    message(`Đã tạo ${data.id} và gửi sang Display.`, 'success');
+    const warnings = data.quality?.warnings || [];
+    const warningText = warnings.length ? ` Cảnh báo chất lượng: ${warnings.join(' ')}` : '';
+    message(`Đã tạo ${data.variantLabel || 'lantern'} ${data.id} và gửi sang Display.${warningText}`, warnings.length ? '' : 'success');
   } catch (error) {
     message(error.message, 'error');
   } finally {
@@ -97,8 +120,13 @@ scan.onclick = async () => {
 };
 
 demo.onclick = async () => {
-  await fetch('/api/demo', { method: 'POST' });
-  message('Đã gửi demo lantern sang Display.', 'success');
+  try {
+    const response = await fetch('/api/demo', { method: 'POST' });
+    if (!response.ok) throw Error('Demo failed');
+    message('Đã gửi demo lantern sang Display.', 'success');
+  } catch (error) {
+    message(error.message, 'error');
+  }
 };
 
 backgroundInput.onchange = async () => {
@@ -128,4 +156,4 @@ backgroundInput.onchange = async () => {
 };
 
 poll();
-setInterval(poll, 600);
+setInterval(poll, 700);
