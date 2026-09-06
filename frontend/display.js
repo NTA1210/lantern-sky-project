@@ -7,12 +7,16 @@ const hideBtn = document.querySelector('#hideHudButton');
 const hud = document.querySelector('#displayHud');
 
 const LANE_CONFIG = [
-  { key: 'classic', label: 'CỔ ĐIỂN', direction: -1, speed: 24 },
-  { key: 'balloon', label: 'BẦU', direction: 1, speed: 19 },
-  { key: 'round', label: 'TRÒN', direction: -1, speed: 28 },
-  { key: 'rectangle', label: 'CHỮ NHẬT', direction: 1, speed: 21 },
+  { key: 'classic', direction: -1, speed: 24 },
+  { key: 'balloon', direction: 1, speed: 19 },
+  { key: 'round', direction: -1, speed: 28 },
+  { key: 'rectangle', direction: 1, speed: 21 },
 ];
-const VISIBLE_LANTERNS = 10;
+// Visual density only: this is how many lantern positions should fit in the
+// viewport at once. It is never a retention limit for lane.records or storage.
+const VISIBLE_SLOT_COUNT = 10;
+// Bitmap decoding is bounded for memory, but metadata/history stays complete
+// and an evicted bitmap is simply loaded again when that lantern loops back.
 const MAX_IMAGE_CACHE = 72;
 
 let W = innerWidth;
@@ -44,6 +48,14 @@ function hashText(text = '') {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0) / 4294967295;
+}
+
+function laneKeyForRecord(id) {
+  const laneIndex = Math.min(
+    LANE_CONFIG.length - 1,
+    Math.floor(hashText(id) * LANE_CONFIG.length),
+  );
+  return LANE_CONFIG[laneIndex].key;
 }
 
 function setTotal(value) {
@@ -185,8 +197,8 @@ function laneGeometry(index) {
 
 function ropeY(index, x, t) {
   const { y } = laneGeometry(index);
-  const sag = 5 + index * 1.2;
-  const wave = Math.sin((x / Math.max(W, 1)) * Math.PI * 2 + index * 0.9 + t * 0.08) * 1.4;
+  const sag = clamp(H * 0.038 + index * 3.5, 22, 52);
+  const wave = Math.sin((x / Math.max(W, 1)) * Math.PI * 2 + index * 0.9 + t * 0.08) * 0.8;
   const normalized = (x / Math.max(W, 1)) * 2 - 1;
   return y + sag * (1 - normalized * normalized) + wave;
 }
@@ -213,20 +225,6 @@ function drawRope(index, t) {
     ctx.shadowBlur = 12;
     ctx.beginPath(); ctx.arc(x, y, 2.1, 0, Math.PI * 2); ctx.fill();
   }
-  ctx.restore();
-}
-
-function drawLaneLabel(lane, index) {
-  const { y } = laneGeometry(index);
-  const rtl = lane.direction < 0;
-  const x = rtl ? 28 : W - 28;
-  ctx.save();
-  ctx.font = `600 ${clamp(W * 0.008, 11, 15)}px Inter, system-ui, sans-serif`;
-  ctx.fillStyle = 'rgba(245,194,105,.9)';
-  ctx.textAlign = rtl ? 'left' : 'right';
-  ctx.textBaseline = 'middle';
-  const arrow = rtl ? '←' : '→';
-  ctx.fillText(`${arrow} DÂY ${index + 1} · ${lane.label}`, x, y + 18);
   ctx.restore();
 }
 
@@ -317,41 +315,43 @@ function drawLantern(record, x, index, t, pitch) {
   ctx.restore();
 }
 
-function drawEmptyLane(index) {
-  const { y } = laneGeometry(index);
-  ctx.save();
-  ctx.font = `500 ${clamp(W * 0.008, 11, 14)}px Inter, system-ui, sans-serif`;
-  ctx.fillStyle = 'rgba(221,201,169,.35)';
-  ctx.textAlign = 'center';
-  ctx.fillText('Đang chờ chiếc đèn đầu tiên…', W / 2, y + 48);
-  ctx.restore();
-}
-
 function drawLane(lane, index, dt, t) {
   drawRope(index, t);
-  drawLaneLabel(lane, index);
+  if (!lane.records.length) return;
 
-  if (!lane.records.length) {
-    drawEmptyLane(index);
+  const pitch = clamp(W / VISIBLE_SLOT_COUNT, 112, 220);
+  const count = lane.records.length;
+
+  // Sparse lanes must use a closed-loop spacing. Rounding records into integer
+  // slots leaves an oversized last-to-first seam (for example 9 records in
+  // 10 slots), which makes the animation visibly jump at the wrap point.
+  if (count < VISIBLE_SLOT_COUNT) {
+    const cycleWidth = VISIBLE_SLOT_COUNT * pitch;
+    const spacing = cycleWidth / count;
+    lane.distance = mod(lane.distance + lane.speed * dt, cycleWidth);
+    const signedDistance = lane.direction < 0 ? -lane.distance : lane.distance;
+
+    for (let recordIndex = 0; recordIndex < count; recordIndex += 1) {
+      const baseX = mod(recordIndex * spacing + signedDistance, cycleWidth);
+
+      // Usually one copy is enough. Wrapped copies keep spacing identical on
+      // very wide displays where the configured cycle is narrower than W.
+      for (let x = baseX; x <= W + pitch; x += cycleWidth) {
+        if (x >= -pitch) drawLantern(lane.records[recordIndex], x, index, t, spacing);
+      }
+      for (let x = baseX - cycleWidth; x >= -pitch; x -= cycleWidth) {
+        if (x <= W + pitch) drawLantern(lane.records[recordIndex], x, index, t, spacing);
+      }
+    }
     return;
   }
 
-  const pitch = clamp(W / VISIBLE_LANTERNS, 112, 220);
-  const count = lane.records.length;
-  const cycleSlots = Math.max(VISIBLE_LANTERNS, count);
+  const cycleSlots = count;
   const cycleWidth = cycleSlots * pitch;
   lane.distance = mod(lane.distance + lane.speed * dt, cycleWidth);
   const cell = Math.floor(lane.distance / pitch);
   const fraction = lane.distance % pitch;
   const slots = Math.ceil(W / pitch) + 2;
-
-  const sparseRecords = new Map();
-  if (count < VISIBLE_LANTERNS) {
-    for (let recordIndex = 0; recordIndex < count; recordIndex += 1) {
-      const cycleSlot = Math.floor(recordIndex * cycleSlots / count);
-      sparseRecords.set(cycleSlot, lane.records[recordIndex]);
-    }
-  }
 
   for (let slot = -1; slot <= slots; slot += 1) {
     let x;
@@ -364,7 +364,7 @@ function drawLane(lane, index, dt, t) {
       cycleSlot = mod(slot - cell, cycleSlots);
     }
     if (x < -pitch || x > W + pitch) continue;
-    const record = count < VISIBLE_LANTERNS ? sparseRecords.get(cycleSlot) : lane.records[cycleSlot];
+    const record = lane.records[cycleSlot];
     if (record) drawLantern(record, x, index, t, pitch);
   }
 }
@@ -374,12 +374,19 @@ function addRecord(item, restored = false) {
   const id = item.id || `${item.url}:${item.variant || 'classic'}`;
   if (lanternIds.has(id)) return;
 
-  const variant = lanes[item.variant] ? item.variant : 'classic';
+  const variant = item.variant || 'classic';
+  const laneKey = laneKeyForRecord(id);
   lanternIds.add(id);
-  lanes[variant].records.push({
+  // Never trim this array to the visible slot count. Every event lantern must
+  // remain in its assigned lane so off-screen records can cycle back later.
+  // Lane assignment is intentionally independent from template type. Hashing
+  // the stable record id gives a random-looking distribution that survives
+  // reload/reconnect without needing another persisted field.
+  lanes[laneKey].records.push({
     id,
     url: item.url,
     variant,
+    laneKey,
     createdAt: item.createdAt || null,
     addedAt: restored ? 0 : performance.now(),
   });

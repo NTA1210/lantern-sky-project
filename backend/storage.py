@@ -120,7 +120,7 @@ def prune_scan_storage(max_items: int) -> None:
 
 
 def recent_lanterns(limit: int = 12) -> list[dict]:
-    limit = max(0, min(limit, config.MAX_RECENT_LANTERNS))
+    limit = max(0, min(limit, config.MAX_RECENT_API_ITEMS))
     return list_lanterns(limit)
 
 

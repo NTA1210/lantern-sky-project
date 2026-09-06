@@ -43,16 +43,16 @@ Những lần sau:
 - Control: `http://127.0.0.1:8000/control`
 - Display: `http://127.0.0.1:8000/display`
 
-Display hiện có **4 dây đèn**, mỗi dây dành cho một template. Khoảng 10 vị trí đèn được nhìn thấy trên mỗi dây ở cùng thời điểm. Các dây chạy ngang liên tục với hướng và tốc độ xen kẽ:
+Display hiện có **4 dây đèn dùng chung cho tất cả template**. Mỗi đèn mới được phân vào một dây theo pseudo-random ổn định từ `id`, không còn gắn Classic/Balloon/Round/Rectangle với một dây cố định. Cùng một đèn vẫn quay lại đúng dây sau reload/reconnect. Khoảng 10 vị trí đèn được nhìn thấy trên mỗi dây ở cùng thời điểm. **10 chỉ là mật độ hiển thị trong viewport, không phải giới hạn số đèn của dây hay giới hạn lưu trữ.** Các dây chạy ngang liên tục với hướng và tốc độ xen kẽ:
 
-| Dây | Template | Hướng | Tốc độ |
-| --- | --- | --- | --- |
-| 1 | Classic | phải → trái | 24 px/s |
-| 2 | Balloon | trái → phải | 19 px/s |
-| 3 | Round | phải → trái | 28 px/s |
-| 4 | Rectangle | trái → phải | 21 px/s |
+| Dây | Hướng | Tốc độ |
+| --- | --- | --- |
+| 1 | phải → trái | 24 px/s |
+| 2 | trái → phải | 19 px/s |
+| 3 | phải → trái | 28 px/s |
+| 4 | trái → phải | 21 px/s |
 
-Mỗi scan mới được WebSocket push ngay vào đúng dây và **Tổng số đèn lồng** được cập nhật real-time. Display đồng bộ lại toàn bộ lịch sử sau reload/reconnect.
+Mỗi scan mới được WebSocket push ngay lên Display, được phân vào một trong bốn dây độc lập với loại template, và **Tổng số đèn lồng** được cập nhật real-time. Display đồng bộ lại toàn bộ lịch sử sau reload/reconnect. Đèn chạy ra khỏi viewport chỉ là tạm thời không được nhìn thấy; record vẫn nằm trong lịch sử của dây và sẽ loop trở lại ở các vòng tiếp theo.
 
 ## 4 mẫu lồng đèn
 
@@ -100,7 +100,7 @@ Tên file mới encode luôn template, ví dụ:
 
 Nhờ vậy sau khi restart/reload, backend vẫn biết ảnh thuộc `classic`, `balloon`, `round` hay `rectangle` và đưa lại vào đúng dây. File từ bản 4-template cũ chưa có suffix được suy ra lại theo kích thước/aspect ratio PNG để đưa về đúng dây; nếu file hỏng thì fallback về `classic`.
 
-`/api/display-state` trả toàn bộ lịch sử cùng `totalCount`. Frontend giữ toàn bộ metadata nhưng chỉ cache một số bitmap đang/chuẩn bị xuất hiện trên màn hình, tránh giữ tất cả ảnh đã scan trong RAM khi sự kiện kéo dài.
+`/api/display-state` trả toàn bộ lịch sử cùng `totalCount`. Frontend giữ toàn bộ metadata của mọi đèn trong suốt event và chỉ dùng khoảng 10 slot/dây để xác định mật độ nhìn thấy. Cache bitmap được giới hạn riêng để tiết kiệm RAM; việc một bitmap bị đẩy khỏi cache **không xóa record và không xóa PNG**, ảnh sẽ được load lại khi lantern đó loop trở lại màn hình.
 
 ## Camera ngoài / Sony
 

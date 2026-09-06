@@ -59,9 +59,9 @@ JPEG_PREVIEW_QUALITY = 82
 JPEG_MASTER_QUALITY = 97
 PNG_COMPRESSION = 3
 
-# /api/recent remains bounded for Control/diagnostics. The projector display
-# loads the complete persisted history from /api/display-state.
-MAX_RECENT_LANTERNS = 40
+# /api/recent remains bounded for Control/diagnostics only. This is not a
+# storage/display retention limit: /api/display-state loads the full history.
+MAX_RECENT_API_ITEMS = 40
 KEEP_DIAGNOSTICS = _env_bool("LANTERN_KEEP_DIAGNOSTICS", False)
 
 MAX_BACKGROUND_BYTES = int(os.environ.get("LANTERN_MAX_BACKGROUND_BYTES", str(20 * 1024 * 1024)))

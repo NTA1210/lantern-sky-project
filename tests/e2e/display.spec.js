@@ -16,6 +16,64 @@ function seedLanterns() {
   });
 }
 
+function seedLongHistory(classicCount = 16) {
+  fs.rmSync(RUNTIME, { recursive: true, force: true });
+  fs.mkdirSync(LANTERNS, { recursive: true });
+  const baseTime = Date.UTC(2026, 8, 6, 12, 0, 0) / 1000;
+  let sequence = 0;
+
+  for (let index = 0; index < classicCount; index += 1) {
+    const file = path.join(LANTERNS, `history_${String(index).padStart(4, '0')}__classic.png`);
+    fs.copyFileSync(SAMPLE, file);
+    const timestamp = baseTime + sequence++;
+    fs.utimesSync(file, timestamp, timestamp);
+  }
+
+  for (const variant of VARIANTS.slice(1)) {
+    const file = path.join(LANTERNS, `history_${String(sequence).padStart(4, '0')}__${variant}.png`);
+    fs.copyFileSync(SAMPLE, file);
+    const timestamp = baseTime + sequence++;
+    fs.utimesSync(file, timestamp, timestamp);
+  }
+}
+
+function hashText(text = '') {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967295;
+}
+
+function laneIndexForId(id) {
+  return Math.min(VARIANTS.length - 1, Math.floor(hashText(id) * VARIANTS.length));
+}
+
+function seedOneClassicPerRandomLane() {
+  fs.rmSync(RUNTIME, { recursive: true, force: true });
+  fs.mkdirSync(LANTERNS, { recursive: true });
+  const selected = new Map();
+
+  for (let index = 0; index < 5000 && selected.size < 4; index += 1) {
+    const id = `random_lane_${String(index).padStart(4, '0')}`;
+    const laneIndex = laneIndexForId(id);
+    if (!selected.has(laneIndex)) selected.set(laneIndex, id);
+  }
+  if (selected.size !== 4) throw new Error('Could not find one stable id per display lane');
+
+  const baseTime = Date.UTC(2026, 8, 6, 12, 0, 0) / 1000;
+  return [...selected.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([laneIndex, id], sequence) => {
+      const file = path.join(LANTERNS, `${id}__classic.png`);
+      fs.copyFileSync(SAMPLE, file);
+      const timestamp = baseTime + sequence;
+      fs.utimesSync(file, timestamp, timestamp);
+      return { laneIndex, id };
+    });
+}
+
 async function installCanvasProbe(page) {
   await page.addInitScript(() => {
     window.__lanternDraws = [];
@@ -47,7 +105,7 @@ test.afterEach(async () => {
   fs.rmSync(RUNTIME, { recursive: true, force: true });
 });
 
-test('display hydrates four template strings and animates in alternating directions', async ({ page }) => {
+test('display hydrates all templates and keeps the canvas animated', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await installCanvasProbe(page);
@@ -76,24 +134,6 @@ test('display hydrates four template strings and animates in alternating directi
     expect(secondPositions[variant], `${variant} should keep rendering`).toBeTruthy();
   }
 
-  const laneYs = VARIANTS.map((variant) => secondPositions[variant].y);
-  expect(laneYs[0]).toBeLessThan(laneYs[1]);
-  expect(laneYs[1]).toBeLessThan(laneYs[2]);
-  expect(laneYs[2]).toBeLessThan(laneYs[3]);
-
-  expect(secondPositions.classic.x).toBeLessThan(firstPositions.classic.x);
-  expect(secondPositions.balloon.x).toBeGreaterThan(firstPositions.balloon.x);
-  expect(secondPositions.round.x).toBeLessThan(firstPositions.round.x);
-  expect(secondPositions.rectangle.x).toBeGreaterThan(firstPositions.rectangle.x);
-
-  const movement = Object.fromEntries(VARIANTS.map((variant) => [
-    variant,
-    Math.abs(secondPositions[variant].x - firstPositions[variant].x),
-  ]));
-  expect(movement.round).toBeGreaterThan(movement.classic);
-  expect(movement.classic).toBeGreaterThan(movement.rectangle);
-  expect(movement.rectangle).toBeGreaterThan(movement.balloon);
-
   const canvas = page.locator('#sky');
   const firstFrame = await canvas.screenshot();
   await page.waitForTimeout(350);
@@ -102,7 +142,7 @@ test('display hydrates four template strings and animates in alternating directi
   expect(pageErrors).toEqual([]);
 });
 
-test('websocket demo is pushed into the matching classic string without changing persisted total', async ({ page, request }) => {
+test('websocket demo is pushed into a display lane without changing persisted total', async ({ page, request }) => {
   await installCanvasProbe(page);
   await page.goto('/display');
   await expect(page.locator('#lanternTotal')).toHaveText('4');
@@ -116,12 +156,45 @@ test('websocket demo is pushed into the matching classic string without changing
   );
 
   const draws = await page.evaluate(() => window.__lanternDraws.slice());
-  const classic = recentPosition(draws, '__classic.png');
   const demo = recentPosition(draws, '/static/sample_lantern.png');
-  expect(classic).toBeTruthy();
   expect(demo).toBeTruthy();
-  expect(Math.abs(classic.y - demo.y)).toBeLessThan(12);
   await expect(page.locator('#lanternTotal')).toHaveText('4');
+});
+
+test('same template lanterns are distributed across stable random lanes', async ({ page }) => {
+  const seeded = seedOneClassicPerRandomLane();
+  await installCanvasProbe(page);
+  await page.goto('/display');
+  await expect(page.locator('#lanternTotal')).toHaveText('4');
+
+  await page.waitForFunction((ids) => {
+    const draws = window.__lanternDraws || [];
+    return ids.every((id) => draws.some((draw) => draw.src.includes(`${id}__classic.png`)));
+  }, seeded.map((entry) => entry.id));
+
+  const draws = await page.evaluate(() => window.__lanternDraws.slice());
+  const positions = seeded.map((entry) => recentPosition(draws, `${entry.id}__classic.png`));
+  positions.forEach((position) => expect(position).toBeTruthy());
+  expect(positions[0].y).toBeLessThan(positions[1].y);
+  expect(positions[1].y).toBeLessThan(positions[2].y);
+  expect(positions[2].y).toBeLessThan(positions[3].y);
+});
+
+test('visible slots do not cap persisted or looping lantern history', async ({ page, request }) => {
+  seedLongHistory(16);
+  await installCanvasProbe(page);
+
+  const response = await request.get('/api/display-state');
+  expect(response.ok()).toBeTruthy();
+  const state = await response.json();
+  expect(state.totalCount).toBe(19);
+  expect(state.lanterns.filter((item) => item.variant === 'classic')).toHaveLength(16);
+
+  await page.goto('/display');
+  await expect(page.locator('#lanternTotal')).toHaveText('19');
+  await page.waitForFunction(() =>
+    (window.__lanternDraws || []).some((draw) => draw.src.includes('history_0011__classic.png'))
+  );
 });
 
 test('control exposes all four printable templates and survives missing camera', async ({ page }) => {
