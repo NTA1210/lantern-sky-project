@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 cd "$(dirname "$0")"
-[ -d .venv ] || python3 -m venv .venv
+
+if [ ! -x .venv/bin/python ]; then
+  ./setup_mac.sh
+fi
+
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-python tools/generate_template.py
-python tools/self_test.py
+
+if [ ! -f print/lantern_template_balloon.png ] || [ ! -f print/lantern_template_round.png ] || [ ! -f print/lantern_template_rectangle.png ]; then
+  python tools/generate_template.py
+fi
+
 python run.py
