@@ -15,13 +15,68 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from . import config
 from .processor import ScanError
 from .scanner import ScannerService
-from .storage import current_background_path, lantern_count, list_lanterns, recent_lanterns
+from .storage import (
+    current_background_path,
+    delete_all_lanterns,
+    delete_lantern,
+    delete_latest_lantern,
+    delete_oldest_lantern,
+    lantern_count,
+    list_lanterns,
+    recent_lanterns,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("lantern.app")
 
 scanner = ScannerService()
 scan_lock = asyncio.Lock()
+sequential_delete_task: asyncio.Task | None = None
+sequential_delete_active = False
+
+
+async def _sequential_delete_worker():
+    global sequential_delete_active, sequential_delete_task
+    try:
+        while sequential_delete_active:
+            total_before = lantern_count()
+            if total_before == 0:
+                # No files on disk, tell Display to pop any in-memory/demo lantern
+                await manager.broadcast({
+                    "type": "pop_oldest_lantern",
+                    "duration": 1.0,
+                    "totalCount": 0,
+                })
+                await asyncio.sleep(1.0)
+                break
+
+            oldest = delete_oldest_lantern()
+            total_after = lantern_count()
+            if oldest is not None:
+                await manager.broadcast({
+                    "type": "lantern_fading_out",
+                    "id": oldest["id"],
+                    "duration": 1.0,
+                    "totalCount": total_after,
+                })
+                # If this was the last lantern on disk, sleep 1.0s for the fade-out animation to complete, then exit loop
+                if total_after == 0:
+                    await asyncio.sleep(1.0)
+                    break
+                await asyncio.sleep(1.0)
+            else:
+                break
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("sequential_delete_error")
+    finally:
+        sequential_delete_active = False
+        sequential_delete_task = None
+        await manager.broadcast({
+            "type": "sequential_delete_completed",
+            "totalCount": lantern_count(),
+        })
 
 
 class Manager:
@@ -80,17 +135,38 @@ def _background_url() -> str | None:
 
 @app.get("/")
 def home():
-    return FileResponse(config.FRONTEND_DIR / "control.html")
+    return FileResponse(config.FRONTEND_DIR / "control.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/control")
 def control():
-    return FileResponse(config.FRONTEND_DIR / "control.html")
+    return FileResponse(config.FRONTEND_DIR / "control.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/display")
 def display():
-    return FileResponse(config.FRONTEND_DIR / "display.html")
+    return FileResponse(config.FRONTEND_DIR / "display.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+from pydantic import BaseModel
+
+
+class CameraSelectRequest(BaseModel):
+    index: int
+
+
+@app.get("/api/cameras")
+def list_cameras():
+    return {
+        "current": config.CAMERA_INDEX,
+        "cameras": scanner.get_available_cameras(),
+    }
+
+
+@app.post("/api/cameras/select")
+def select_camera(payload: CameraSelectRequest):
+    scanner.switch_camera(payload.index)
+    return {"ok": True, "current": config.CAMERA_INDEX}
 
 
 @app.get("/api/status")
@@ -252,6 +328,74 @@ def recent(limit: int = 12):
 @app.get("/api/lanterns")
 def lanterns():
     return {"totalCount": lantern_count(), "lanterns": list_lanterns()}
+
+
+@app.post("/api/lanterns/sequential-delete/start")
+async def start_sequential_delete():
+    global sequential_delete_active, sequential_delete_task
+    if sequential_delete_active and sequential_delete_task and not sequential_delete_task.done():
+        return {"ok": True, "active": True, "message": "Đang chạy xóa lần lượt."}
+    sequential_delete_active = True
+    sequential_delete_task = asyncio.create_task(_sequential_delete_worker())
+    await manager.broadcast({"type": "sequential_delete_started", "totalCount": lantern_count()})
+    return {"ok": True, "active": True, "totalCount": lantern_count()}
+
+
+@app.post("/api/lanterns/sequential-delete/stop")
+async def stop_sequential_delete():
+    global sequential_delete_active, sequential_delete_task
+    sequential_delete_active = False
+    if sequential_delete_task and not sequential_delete_task.done():
+        sequential_delete_task.cancel()
+    sequential_delete_task = None
+    await manager.broadcast({"type": "sequential_delete_stopped", "totalCount": lantern_count()})
+    return {"ok": True, "active": False, "totalCount": lantern_count()}
+
+
+@app.get("/api/lanterns/sequential-delete/status")
+def sequential_delete_status():
+    return {"active": sequential_delete_active, "totalCount": lantern_count()}
+
+
+@app.delete("/api/lanterns")
+async def clear_all_lanterns():
+    global sequential_delete_active, sequential_delete_task
+    sequential_delete_active = False
+    if sequential_delete_task and not sequential_delete_task.done():
+        sequential_delete_task.cancel()
+    deleted_count = delete_all_lanterns()
+    await manager.broadcast({"type": "all_lanterns_fading_out", "duration": 1.0, "totalCount": 0})
+    return {"ok": True, "deletedCount": deleted_count, "totalCount": 0}
+
+
+@app.post("/api/lanterns/delete-latest")
+async def remove_latest_lantern():
+    record = delete_latest_lantern()
+    if record is None:
+        raise HTTPException(404, detail="Không có lồng đèn nào để xóa.")
+    total = lantern_count()
+    await manager.broadcast({
+        "type": "lantern_fading_out",
+        "id": record["id"],
+        "duration": 1.0,
+        "totalCount": total,
+    })
+    return {"ok": True, "deletedId": record["id"], "totalCount": total}
+
+
+@app.delete("/api/lanterns/{scan_id}")
+async def remove_single_lantern(scan_id: str):
+    ok = delete_lantern(scan_id)
+    if not ok:
+        raise HTTPException(404, detail=f"Không tìm thấy lồng đèn: {scan_id}")
+    total = lantern_count()
+    await manager.broadcast({
+        "type": "lantern_fading_out",
+        "id": scan_id,
+        "duration": 1.0,
+        "totalCount": total,
+    })
+    return {"ok": True, "deletedId": scan_id, "totalCount": total}
 
 
 @app.get("/api/display-state")

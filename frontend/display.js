@@ -51,18 +51,40 @@ function hashText(text = '') {
 }
 
 function laneKeyForRecord(id) {
-  const laneIndex = Math.min(
-    LANE_CONFIG.length - 1,
-    Math.floor(hashText(id) * LANE_CONFIG.length),
+  // Find minimum active lantern count across all lanes
+  const laneEntries = Object.entries(lanes);
+  let minCount = Infinity;
+  for (const [, lane] of laneEntries) {
+    const activeCount = lane.records.filter((rec) => !rec.dead && !rec.fadingOut).length;
+    if (activeCount < minCount) {
+      minCount = activeCount;
+    }
+  }
+
+  // Find all candidate lanes having the minimum count
+  const candidateKeys = [];
+  for (const [key, lane] of laneEntries) {
+    const activeCount = lane.records.filter((rec) => !rec.dead && !rec.fadingOut).length;
+    if (activeCount === minCount) {
+      candidateKeys.push(key);
+    }
+  }
+
+  // Deterministically select among tied least-loaded lanes via hashText
+  const choiceIndex = Math.min(
+    candidateKeys.length - 1,
+    Math.floor(hashText(id) * candidateKeys.length)
   );
-  return LANE_CONFIG[laneIndex].key;
+  return candidateKeys[choiceIndex];
 }
 
 function setTotal(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return;
   totalCount = Math.max(0, Math.floor(numeric));
-  totalEl.textContent = totalCount.toLocaleString('vi-VN');
+  if (totalEl) {
+    totalEl.textContent = totalCount.toLocaleString('vi-VN');
+  }
 }
 
 function resize() {
@@ -189,8 +211,8 @@ function drawBackground(t) {
 }
 
 function laneGeometry(index) {
-  const top = H * 0.245;
-  const bottom = H * 0.79;
+  const top = H * 0.18;
+  const bottom = H * 0.82;
   const gap = (bottom - top) / (LANE_CONFIG.length - 1);
   return { y: top + gap * index, gap };
 }
@@ -203,27 +225,50 @@ function ropeY(index, x, t) {
   return y + sag * (1 - normalized * normalized) + wave;
 }
 
-function drawRope(index, t) {
+function drawRope(lane, index, signedDistance, t) {
   ctx.save();
-  ctx.lineWidth = clamp(W / 950, 1.4, 2.6);
-  ctx.strokeStyle = 'rgba(151,91,34,.88)';
-  ctx.shadowColor = 'rgba(255,150,52,.22)';
-  ctx.shadowBlur = 5;
+  const baseWidth = clamp(W / 950, 1.8, 3.0);
+
+  // 1. Base cable curve
   ctx.beginPath();
-  for (let x = -40; x <= W + 40; x += 30) {
+  for (let x = -40; x <= W + 40; x += 25) {
     const y = ropeY(index, x, t);
     if (x === -40) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
+  ctx.lineWidth = baseWidth;
+  ctx.strokeStyle = 'rgba(120, 68, 22, 0.95)';
+  ctx.shadowColor = 'rgba(255, 140, 40, 0.25)';
+  ctx.shadowBlur = 6;
   ctx.stroke();
 
-  const bulbGap = clamp(W / 32, 32, 62);
-  for (let x = bulbGap * 0.5; x < W; x += bulbGap) {
-    const y = ropeY(index, x, t) + 4;
-    ctx.fillStyle = 'rgba(255,190,92,.95)';
-    ctx.shadowColor = 'rgba(255,151,50,.95)';
-    ctx.shadowBlur = 12;
-    ctx.beginPath(); ctx.arc(x, y, 2.1, 0, Math.PI * 2); ctx.fill();
+  // 2. Twisted moving rope strands / texture flow
+  ctx.save();
+  ctx.lineWidth = baseWidth * 0.7;
+  ctx.strokeStyle = 'rgba(238, 175, 88, 0.82)';
+  ctx.setLineDash([7, 11]);
+  ctx.lineDashOffset = -signedDistance * 1.3;
+  ctx.stroke();
+  ctx.restore();
+
+  // 3. LED Bulbs attached to the moving cable rope
+  const bulbGap = clamp(W / 24, 42, 75);
+  const bulbOffset = mod(signedDistance, bulbGap);
+  for (let bx = bulbOffset - bulbGap; bx <= W + bulbGap; bx += bulbGap) {
+    const by = ropeY(index, bx, t);
+    
+    // Socket clamp holding the bulb to the moving rope
+    ctx.fillStyle = 'rgba(80, 44, 15, 0.95)';
+    ctx.fillRect(bx - 2, by - 1, 4, 3);
+    
+    // Warm luminous LED bulb
+    const flicker = 0.88 + 0.12 * Math.sin(t * 3.2 + bx * 0.12);
+    ctx.fillStyle = 'rgba(255, 205, 115, 0.98)';
+    ctx.shadowColor = 'rgba(255, 150, 45, 0.95)';
+    ctx.shadowBlur = 12 * flicker;
+    ctx.beginPath();
+    ctx.arc(bx, by + 4, 2.3, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -265,90 +310,138 @@ function trimImageCache() {
   }
 }
 
-function drawLoadingLantern(x, y) {
+function drawLoadingLantern(x, anchorY, totalAngle, stringLength) {
   ctx.save();
+  ctx.translate(x, anchorY);
+  ctx.rotate(totalAngle);
+  ctx.strokeStyle = 'rgba(145, 95, 50, 0.92)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, stringLength);
+  ctx.stroke();
+
   ctx.fillStyle = 'rgba(255,184,82,.42)';
   ctx.shadowColor = 'rgba(255,153,45,.7)';
   ctx.shadowBlur = 18;
   ctx.beginPath();
-  ctx.ellipse(x, y + 34, 17, 25, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, stringLength + 25, 17, 25, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
 
-function drawLantern(record, x, index, t, pitch) {
-  const entry = touchImage(record);
+function drawLantern(record, x, index, t, pitch, lane) {
+  let alpha = 1.0;
+  if (record.fadingOut) {
+    const elapsed = performance.now() - (record.fadeStartAt || performance.now());
+    const duration = record.fadeDurationMs || 1000;
+    const progress = Math.min(1, elapsed / duration);
+    alpha = Math.max(0, 1 - progress);
+    if (progress >= 1) {
+      record.dead = true;
+      lanternIds.delete(record.id);
+    }
+  }
+
   const anchorY = ropeY(index, x, t);
   const phase = hashText(record.id || record.url) * Math.PI * 2;
-  const bob = Math.sin(t * 1.15 + phase) * 2.8;
-  const rotation = Math.sin(t * 0.8 + phase) * 0.025;
+  const bob = Math.sin(t * 1.25 + phase) * 3.5;
+  
+  // Dynamic wind sway & drag pendulum angle
+  // 1. Natural wind gusts across screen
+  const windGust = Math.sin(t * 0.75 + (x / Math.max(W, 1)) * 3.0) * 0.045;
+  // 2. Harmonic pendulum swing (con lắc đung đưa nhịp nhàng rõ nét)
+  const pendulumSway = Math.sin(t * 1.55 + phase) * 0.085 + Math.sin(t * 2.7 + phase * 1.4) * 0.025;
+  // 3. Inertial tilt trailing behind the moving rope
+  const dragTilt = (lane.direction < 0 ? 0.055 : -0.055) * (lane.speed / 22);
+  const totalAngle = dragTilt + pendulumSway + windGust;
 
+  const { gap } = laneGeometry(index);
+  const stringLength = clamp(gap * 0.16, 14, 26) + bob * 0.4;
+
+  const entry = touchImage(record);
   if (!entry.img) {
-    drawLoadingLantern(x, anchorY + 10 + bob);
+    drawLoadingLantern(x, anchorY, totalAngle, stringLength);
     return;
   }
 
   const image = entry.img;
-  const { gap } = laneGeometry(index);
-  const maxHeight = clamp(gap * 0.62, 72, 132);
+  const maxHeight = clamp(gap * 0.60, 68, 128);
   const maxWidth = pitch * 0.72;
   const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
   const width = Math.max(24, image.naturalWidth * scale);
   const height = Math.max(36, image.naturalHeight * scale);
-  const top = anchorY + 14 + bob;
 
   ctx.save();
-  ctx.strokeStyle = 'rgba(125,82,46,.88)';
-  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = alpha;
+
+  // 1. Cable clamp at anchor on moving rope
+  ctx.fillStyle = 'rgba(215, 145, 50, 0.95)';
+  ctx.fillRect(x - 3.5, anchorY - 2.5, 7, 5);
+  ctx.fillStyle = 'rgba(85, 45, 15, 0.95)';
+  ctx.fillRect(x - 2, anchorY - 1.5, 4, 3);
+
+  // 2. Pivot around the top hook (x, anchorY)
+  ctx.translate(x, anchorY);
+  ctx.rotate(totalAngle);
+
+  // 3. Hanging string swinging from top hook
+  ctx.strokeStyle = 'rgba(145, 95, 50, 0.92)';
+  ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.moveTo(x, anchorY + 1);
-  ctx.lineTo(x, top + 4);
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, stringLength);
   ctx.stroke();
 
+  // 4. Little metallic ring/knot at top of lantern
+  ctx.fillStyle = 'rgba(235, 180, 85, 0.95)';
+  ctx.beginPath();
+  ctx.arc(0, stringLength, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 5. Draw lantern image centered under the swinging string
   const ageMs = performance.now() - (record.addedAt || 0);
-  const newGlow = record.addedAt && ageMs < 5000 ? 1 - ageMs / 5000 : 0;
-  ctx.translate(x, top + height / 2);
-  ctx.rotate(rotation);
-  ctx.shadowColor = `rgba(255,147,50,${0.52 + newGlow * 0.35})`;
-  ctx.shadowBlur = 18 + newGlow * 24;
-  ctx.drawImage(image, -width / 2, -height / 2, width, height);
+  const newGlow = record.addedAt && ageMs < 5000 && !record.fadingOut ? 1 - ageMs / 5000 : 0;
+  ctx.shadowColor = `rgba(255,147,50,${(0.52 + newGlow * 0.35) * alpha})`;
+  ctx.shadowBlur = (18 + newGlow * 24) * alpha;
+  ctx.drawImage(image, -width / 2, stringLength, width, height);
+
   ctx.restore();
 }
 
 function drawLane(lane, index, dt, t) {
-  drawRope(index, t);
-  if (!lane.records.length) return;
-
   const pitch = clamp(W / VISIBLE_SLOT_COUNT, 112, 220);
   const count = lane.records.length;
+  const cycleWidth = count < VISIBLE_SLOT_COUNT ? VISIBLE_SLOT_COUNT * pitch : count * pitch;
 
-  // Sparse lanes must use a closed-loop spacing. Rounding records into integer
-  // slots leaves an oversized last-to-first seam (for example 9 records in
-  // 10 slots), which makes the animation visibly jump at the wrap point.
+  // Advance rope conveyor distance
+  lane.distance = mod(lane.distance + lane.speed * dt, cycleWidth);
+  const signedDistance = lane.direction < 0 ? -lane.distance : lane.distance;
+
+  // Draw moving rope and attached moving LED bulbs
+  drawRope(lane, index, signedDistance, t);
+
+  // Clean up fully faded records
+  lane.records = lane.records.filter((rec) => !rec.dead);
+  if (!lane.records.length) return;
+
+  // Sparse lanes closed-loop spacing
   if (count < VISIBLE_SLOT_COUNT) {
-    const cycleWidth = VISIBLE_SLOT_COUNT * pitch;
     const spacing = cycleWidth / count;
-    lane.distance = mod(lane.distance + lane.speed * dt, cycleWidth);
-    const signedDistance = lane.direction < 0 ? -lane.distance : lane.distance;
-
     for (let recordIndex = 0; recordIndex < count; recordIndex += 1) {
       const baseX = mod(recordIndex * spacing + signedDistance, cycleWidth);
-
-      // Usually one copy is enough. Wrapped copies keep spacing identical on
-      // very wide displays where the configured cycle is narrower than W.
       for (let x = baseX; x <= W + pitch; x += cycleWidth) {
-        if (x >= -pitch) drawLantern(lane.records[recordIndex], x, index, t, spacing);
+        if (x >= -pitch) drawLantern(lane.records[recordIndex], x, index, t, spacing, lane);
       }
       for (let x = baseX - cycleWidth; x >= -pitch; x -= cycleWidth) {
-        if (x <= W + pitch) drawLantern(lane.records[recordIndex], x, index, t, spacing);
+        if (x <= W + pitch) drawLantern(lane.records[recordIndex], x, index, t, spacing, lane);
       }
     }
     return;
   }
 
+  // Dense lanes
   const cycleSlots = count;
-  const cycleWidth = cycleSlots * pitch;
-  lane.distance = mod(lane.distance + lane.speed * dt, cycleWidth);
   const cell = Math.floor(lane.distance / pitch);
   const fraction = lane.distance % pitch;
   const slots = Math.ceil(W / pitch) + 2;
@@ -365,7 +458,7 @@ function drawLane(lane, index, dt, t) {
     }
     if (x < -pitch || x > W + pitch) continue;
     const record = lane.records[cycleSlot];
-    if (record) drawLantern(record, x, index, t, pitch);
+    if (record) drawLantern(record, x, index, t, pitch, lane);
   }
 }
 
@@ -407,11 +500,86 @@ async function syncState() {
     if (!response.ok) throw Error(`Display state ${response.status}`);
     const state = await response.json();
     await loadBackground(state.backgroundUrl || null);
-    for (const item of state.lanterns || []) addRecord(item, true);
+    
+    clearAllRecords();
+    const items = [...(state.lanterns || [])];
+    items.sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return ta - tb;
+    });
+
+    for (const item of items) addRecord(item, true);
     setTotal(state.totalCount ?? lanternIds.size);
   } catch (error) {
     console.error(error);
   }
+}
+
+function fadeOutLanternById(id, durationMs = 1000) {
+  let matched = false;
+  Object.values(lanes).forEach((lane) => {
+    lane.records.forEach((rec) => {
+      if ((rec.id === id || rec.id.startsWith(id)) && !rec.fadingOut) {
+        rec.fadingOut = true;
+        rec.fadeStartAt = performance.now();
+        rec.fadeDurationMs = durationMs;
+        matched = true;
+      }
+    });
+  });
+  if (!matched) {
+    fadeOutOldestLantern(durationMs);
+  }
+}
+
+function fadeOutOldestLantern(durationMs = 1000) {
+  const activeRecords = [];
+  Object.values(lanes).forEach((lane) => {
+    lane.records.forEach((rec) => {
+      if (!rec.fadingOut && !rec.dead) {
+        activeRecords.push(rec);
+      }
+    });
+  });
+
+  if (!activeRecords.length) return false;
+
+  activeRecords.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0));
+  const oldest = activeRecords[0];
+  oldest.fadingOut = true;
+  oldest.fadeStartAt = performance.now();
+  oldest.fadeDurationMs = durationMs;
+  return true;
+}
+
+function fadeOutAllLanterns(durationMs = 1000) {
+  Object.values(lanes).forEach((lane) => {
+    lane.records.forEach((rec) => {
+      rec.fadingOut = true;
+      rec.fadeStartAt = performance.now();
+      rec.fadeDurationMs = durationMs;
+    });
+  });
+  setTotal(0);
+}
+
+function clearAllRecords() {
+  lanternIds.clear();
+  Object.values(lanes).forEach((lane) => {
+    lane.records = [];
+    lane.distance = 0;
+  });
+  imageCache.clear();
+  setTotal(0);
+}
+
+function removeRecord(id) {
+  if (!id) return;
+  lanternIds.delete(id);
+  Object.values(lanes).forEach((lane) => {
+    lane.records = lane.records.filter((rec) => rec.id !== id && !rec.id.startsWith(id));
+  });
 }
 
 function connect() {
@@ -428,6 +596,29 @@ function connect() {
         addRecord(payload, false);
         if (Number.isFinite(Number(payload.totalCount))) setTotal(payload.totalCount);
         else if (!payload.demo) setTotal(totalCount + 1);
+      }
+      if (payload.type === 'lantern_fading_out') {
+        const duration = (payload.duration || 1.0) * 1000;
+        fadeOutLanternById(payload.id, duration);
+        if (Number.isFinite(Number(payload.totalCount))) setTotal(payload.totalCount);
+        else setTotal(Math.max(0, totalCount - 1));
+      }
+      if (payload.type === 'pop_oldest_lantern') {
+        const duration = (payload.duration || 1.0) * 1000;
+        fadeOutOldestLantern(duration);
+        if (Number.isFinite(Number(payload.totalCount))) setTotal(payload.totalCount);
+        else setTotal(Math.max(0, totalCount - 1));
+      }
+      if (payload.type === 'all_lanterns_fading_out') {
+        const duration = (payload.duration || 1.0) * 1000;
+        fadeOutAllLanterns(duration);
+      }
+      if (payload.type === 'lantern_deleted') {
+        removeRecord(payload.id);
+        if (Number.isFinite(Number(payload.totalCount))) setTotal(payload.totalCount);
+      }
+      if (payload.type === 'lanterns_cleared') {
+        clearAllRecords();
       }
       if (payload.type === 'background_changed') loadBackground(payload.url || null);
     } catch (error) {

@@ -103,6 +103,63 @@ def lantern_count() -> int:
     return sum(1 for _ in config.LANTERNS_DIR.glob("*.png"))
 
 
+def delete_lantern(scan_id: str) -> bool:
+    """Delete a single lantern and its diagnostic files by ID."""
+    found = False
+    for lantern in config.LANTERNS_DIR.glob("*.png"):
+        record = _parse_lantern_path(lantern)
+        if (
+            record["id"] == scan_id
+            or lantern.stem == scan_id
+            or lantern.name.startswith(f"{scan_id}_")
+            or lantern.name.startswith(f"{scan_id}.")
+        ):
+            lantern.unlink(missing_ok=True)
+            found = True
+    (config.ORIGINAL_DIR / f"{scan_id}.jpg").unlink(missing_ok=True)
+    (config.CORRECTED_DIR / f"{scan_id}.png").unlink(missing_ok=True)
+    return found
+
+
+def delete_oldest_lantern() -> dict | None:
+    """Delete the oldest created lantern (FIFO)."""
+    lanterns = sorted(config.LANTERNS_DIR.glob("*.png"), key=lambda item: item.stat().st_mtime)
+    if not lanterns:
+        return None
+    oldest = lanterns[0]
+    record = _parse_lantern_path(oldest)
+    oldest.unlink(missing_ok=True)
+    (config.ORIGINAL_DIR / f"{record['id']}.jpg").unlink(missing_ok=True)
+    (config.CORRECTED_DIR / f"{record['id']}.png").unlink(missing_ok=True)
+    return record
+
+
+def delete_latest_lantern() -> dict | None:
+    """Delete the most recently created lantern."""
+    lanterns = sorted(config.LANTERNS_DIR.glob("*.png"), key=lambda item: item.stat().st_mtime)
+    if not lanterns:
+        return None
+    latest = lanterns[-1]
+    record = _parse_lantern_path(latest)
+    latest.unlink(missing_ok=True)
+    (config.ORIGINAL_DIR / f"{record['id']}.jpg").unlink(missing_ok=True)
+    (config.CORRECTED_DIR / f"{record['id']}.png").unlink(missing_ok=True)
+    return record
+
+
+def delete_all_lanterns() -> int:
+    """Delete all scanned lanterns and diagnostics."""
+    count = 0
+    for lantern in config.LANTERNS_DIR.glob("*.png"):
+        lantern.unlink(missing_ok=True)
+        count += 1
+    for item in config.ORIGINAL_DIR.glob("*.jpg"):
+        item.unlink(missing_ok=True)
+    for item in config.CORRECTED_DIR.glob("*.png"):
+        item.unlink(missing_ok=True)
+    return count
+
+
 def prune_scan_storage(max_items: int) -> None:
     """Explicit maintenance helper; normal event scans never call this.
 
@@ -131,3 +188,4 @@ def current_background_path() -> Path | None:
         reverse=True,
     )
     return candidates[0] if candidates else None
+

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Lantern Sky - Control</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=8">
 </head>
 <body class="control-page">
   <main class="shell">
@@ -21,11 +21,17 @@
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h2>Camera</h2>
+            <h2>Camera Scanner</h2>
             <p id="cameraMeta" class="muted small">Đang kết nối...</p>
             <p id="templateMeta" class="muted small">Waiting for template...</p>
           </div>
-          <span id="readyBadge" class="badge">Checking</span>
+          <div class="panel-head-actions">
+            <select id="cameraSelect" class="camera-select" title="Chọn nguồn Camera">
+              <option value="0">Đang quét thiết bị...</option>
+            </select>
+            <button id="refreshCamerasBtn" class="button-icon" title="Quét lại thiết bị camera">🔄</button>
+            <span id="readyBadge" class="badge">Checking</span>
+          </div>
         </div>
 
         <div id="cameraWrap" class="camera-wrap is-loading">
@@ -37,10 +43,20 @@
         </div>
 
         <div class="marker-row" aria-label="Expected marker IDs">
-          <span class="marker" data-slot="0">–</span>
-          <span class="marker" data-slot="1">–</span>
-          <span class="marker" data-slot="2">–</span>
-          <span class="marker" data-slot="3">–</span>
+          <div class="markers-group">
+            <span class="marker" data-slot="0">–</span>
+            <span class="marker" data-slot="1">–</span>
+            <span class="marker" data-slot="2">–</span>
+            <span class="marker" data-slot="3">–</span>
+          </div>
+          <label class="auto-scan-toggle" title="Tự động chụp sau 2 giây khi nhận đủ 4 marker">
+            <input id="autoScanToggle" type="checkbox" checked>
+            <span>Tự động Scan (2s)</span>
+          </label>
+        </div>
+
+        <div id="countdownTrack" class="countdown-track">
+          <div id="countdownBar" class="countdown-bar"></div>
         </div>
 
         <div class="actions">
@@ -59,6 +75,18 @@
         </div>
         <div class="result-stage">
           <img id="resultImage" src="/static/sample_lantern.png" alt="Last lantern">
+        </div>
+
+        <div class="upload-box">
+          <div>
+            <h2>Quản lý lồng đèn đã quét</h2>
+            <p id="lanternManageMeta" class="muted small">Tổng số đèn: 0</p>
+          </div>
+          <div class="lantern-manage-actions">
+            <button id="toggleSequentialBtn" class="button secondary">▶ Xóa lần lượt (1s/đèn)</button>
+            <button id="deleteAllBtn" class="button danger">Xóa tất cả lồng đèn</button>
+          </div>
+          <div id="recentGallery" class="recent-list"></div>
         </div>
 
         <div class="upload-box">
@@ -102,6 +130,18 @@
       </aside>
     </section>
   </main>
-  <script src="/static/control.js"></script>
+
+  <div id="confirmModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3 id="modalTitle">Xác nhận</h3>
+      <p id="modalMessage">Bạn có chắc chắn muốn thực hiện hành động này?</p>
+      <div class="modal-actions">
+        <button id="modalCancelBtn" class="button secondary">Hủy bỏ</button>
+        <button id="modalConfirmBtn" class="button danger">Xác nhận</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/control.js?v=8"></script>
 </body>
 </html>

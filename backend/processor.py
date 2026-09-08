@@ -39,6 +39,15 @@ class LanternProcessor:
         self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         params = cv2.aruco.DetectorParameters()
         params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        params.adaptiveThreshWinSizeMin = 3
+        params.adaptiveThreshWinSizeMax = 23
+        params.adaptiveThreshWinSizeStep = 10
+        params.adaptiveThreshConstant = 7.0
+        params.minMarkerPerimeterRate = 0.02
+        params.maxMarkerPerimeterRate = 4.0
+        params.polygonalApproxAccuracyRate = 0.05
+        params.minCornerDistanceRate = 0.05
+        params.minDistanceToBorder = 3
         self.detector = cv2.aruco.ArucoDetector(self.dictionary, params)
 
     def detect(self, frame):
@@ -70,10 +79,10 @@ class LanternProcessor:
 
         src_array = np.asarray(src, np.float32)
         dst_array = np.asarray(dst, np.float32)
-        homography, inlier_mask = cv2.findHomography(src_array, dst_array, cv2.RANSAC, 3.0)
+        homography, inlier_mask = cv2.findHomography(src_array, dst_array, cv2.RANSAC, 6.0)
         if homography is None:
             raise ScanError("Không tính được perspective transform.")
-        if inlier_mask is not None and int(inlier_mask.sum()) < 10:
+        if inlier_mask is not None and int(inlier_mask.sum()) < 8:
             raise ScanError("Góc chụp quá méo hoặc marker không ổn định. Hãy đặt giấy phẳng và thử lại.")
 
         rectified = cv2.warpPerspective(
@@ -137,10 +146,10 @@ class LanternProcessor:
         out[alpha == 0, 0:3] = 255
         return out
 
-    def process(self, frame):
+    def process(self, frame, precomputed_detected=None, precomputed_variant=None):
         started = time.perf_counter()
-        detected = self.detect(frame)
-        variant = self.identify_variant(detected, require_complete=True)
+        detected = precomputed_detected if precomputed_detected is not None else self.detect(frame)
+        variant = precomputed_variant if precomputed_variant is not None else self.identify_variant(detected, require_complete=True)
         if variant is None:
             partial = self.identify_variant(detected, require_complete=False)
             if partial:

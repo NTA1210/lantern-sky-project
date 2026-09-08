@@ -16,4 +16,5 @@ def open_browser():
 
 if __name__ == "__main__":
     threading.Timer(1.2, open_browser).start()
-    uvicorn.run("backend.app:app", host=config.HOST, port=config.PORT, reload=False)
+    reload_enabled = os.environ.get("LANTERN_RELOAD", "1") == "1"
+    uvicorn.run("backend.app:app", host=config.HOST, port=config.PORT, reload=reload_enabled)

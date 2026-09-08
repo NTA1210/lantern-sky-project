@@ -1,7 +1,7 @@
-from __future__ import annotations
-
+import json
 import logging
 import platform
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -134,6 +134,49 @@ class ScannerService:
         if camera is not None:
             camera.release()
         self._set_camera(None)
+
+    def switch_camera(self, index: int) -> None:
+        """Dynamically switch camera index and trigger reconnection."""
+        logger.info("switching_camera to index=%s", index)
+        with self.lock:
+            config.CAMERA_INDEX = int(index)
+            self.error = f"Đang chuyển sang Camera #{index}..."
+            self.camera_open = False
+        self._close_camera()
+
+    @staticmethod
+    def get_available_cameras(max_probe: int = 6) -> list[dict]:
+        """Retrieve real camera device names from macOS system_profiler or fallback."""
+        cameras = []
+        if platform.system() == "Darwin":
+            try:
+                cmd = ["system_profiler", "-json", "SPCameraDataType"]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=2.5)
+                if res.returncode == 0:
+                    data = json.loads(res.stdout)
+                    dev_list = data.get("SPCameraDataType", [])
+                    for idx, dev in enumerate(dev_list):
+                        name = dev.get("_name") or dev.get("spcamera_model-id") or f"Camera #{idx}"
+                        is_active = (idx == config.CAMERA_INDEX)
+                        cameras.append({
+                            "index": idx,
+                            "label": f"[{idx}] {name}{' — Đang dùng' if is_active else ''}",
+                            "name": name,
+                            "active": is_active,
+                        })
+            except Exception:
+                logger.exception("system_profiler_camera_failed")
+
+        if not cameras:
+            for idx in range(max_probe):
+                is_active = (idx == config.CAMERA_INDEX)
+                cameras.append({
+                    "index": idx,
+                    "label": f"Camera #{idx}{' — Đang dùng' if is_active else ''}",
+                    "name": f"Camera #{idx}",
+                    "active": is_active,
+                })
+        return cameras
 
     def start(self):
         if self.running:
@@ -273,9 +316,39 @@ class ScannerService:
         )
 
     def capture_and_process(self):
+        best_candidate = None
+        best_focus = -1.0
+
+        # Sample up to 6 frames across ~250ms to ensure stability against single-frame shutter flutter
+        for attempt in range(6):
+            with self.lock:
+                if self.frame is None:
+                    raise ScanError("Chưa có frame từ camera.")
+                frame = self.frame.copy()
+
+            try:
+                detected = self.scan_processor.detect(frame)
+                variant = self.scan_processor.identify_variant(detected, require_complete=True)
+                if variant is not None:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    focus = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                    if focus > best_focus:
+                        best_focus = focus
+                        best_candidate = (frame, detected, variant)
+                    # If we found a crisp frame on subsequent attempt, break early for fast responsiveness
+                    if attempt >= 1 and best_candidate is not None:
+                        break
+            except Exception:
+                pass
+
+            time.sleep(0.04)
+
+        if best_candidate is not None:
+            frame, detected, variant = best_candidate
+            return self.scan_processor.process(frame, precomputed_detected=detected, precomputed_variant=variant)
+
+        # Fallback to single shot process on current frame (will raise specific ScanError)
         with self.lock:
-            if self.frame is None:
-                raise ScanError("Chưa có frame từ camera.")
             frame = self.frame.copy()
         return self.scan_processor.process(frame)
 
