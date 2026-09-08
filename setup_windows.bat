@@ -8,20 +8,30 @@ echo  Lantern Sky - Windows setup
 echo ========================================
 echo.
 
+set "PYTHON_CMD="
+
 where py >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] Khong tim thay Python launcher "py".
-  echo Cai Python 3.11+ tu https://www.python.org/downloads/windows/
-  echo Nho tick "Add python.exe to PATH" khi cai.
-  echo.
-  pause
-  exit /b 1
+if not errorlevel 1 (
+  py -3 --version >nul 2>nul
+  if not errorlevel 1 (
+    set "PYTHON_CMD=py -3"
+  )
 )
 
-py -3 --version >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] Khong tim thay Python 3.
-  echo Hay cai Python 3.11+ roi chay lai file nay.
+if not defined PYTHON_CMD (
+  where python >nul 2>nul
+  if not errorlevel 1 (
+    python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul
+    if not errorlevel 1 (
+      set "PYTHON_CMD=python"
+    )
+  )
+)
+
+if not defined PYTHON_CMD (
+  echo [ERROR] Khong tim thay Python 3.10+ (py hoac python trong PATH).
+  echo Hay cai Python 3.11+ tu https://www.python.org/downloads/windows/
+  echo Nho tick "Add python.exe to PATH" khi cai dat.
   echo.
   pause
   exit /b 1
@@ -29,7 +39,7 @@ if errorlevel 1 (
 
 if not exist .venv (
   echo [1/5] Tao moi moi truong ao .venv...
-  py -3 -m venv .venv
+  %PYTHON_CMD% -m venv .venv
   if errorlevel 1 goto fail
 ) else (
   echo [1/5] Da co .venv, bo qua buoc tao moi.
