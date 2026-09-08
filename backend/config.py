@@ -51,7 +51,7 @@ CAMERA_RECONNECT_SECONDS = float(os.environ.get("LANTERN_CAMERA_RECONNECT_SECOND
 CAMERA_READ_FAILURE_LIMIT = int(os.environ.get("LANTERN_CAMERA_READ_FAILURE_LIMIT", "8"))
 CAMERA_PROBE_MAX = int(os.environ.get("LANTERN_CAMERA_PROBE_MAX", "6"))
 PREVIEW_MAX_WIDTH = int(os.environ.get("LANTERN_PREVIEW_MAX_WIDTH", "1280"))
-PREVIEW_FPS = float(os.environ.get("LANTERN_PREVIEW_FPS", "12"))
+PREVIEW_FPS = float(os.environ.get("LANTERN_PREVIEW_FPS", "25"))
 
 CANONICAL_WIDTH = int(os.environ.get("LANTERN_CANONICAL_WIDTH", "1600"))
 CANONICAL_HEIGHT = round(CANONICAL_WIDTH * 297 / 210)
@@ -66,3 +66,45 @@ KEEP_DIAGNOSTICS = _env_bool("LANTERN_KEEP_DIAGNOSTICS", False)
 
 MAX_BACKGROUND_BYTES = int(os.environ.get("LANTERN_MAX_BACKGROUND_BYTES", str(20 * 1024 * 1024)))
 MAX_BACKGROUND_PIXELS = int(os.environ.get("LANTERN_MAX_BACKGROUND_PIXELS", "40000000"))
+
+SETTINGS_FILE = RUNTIME_DIR / "settings.json"
+
+DEFAULT_SETTINGS = {
+    "conveyor_speed": 1.0,
+    "sway_amplitude": 1.0,
+    "sway_speed": 1.0,
+    "auto_scan_seconds": 2.0,
+    "camera_flip_horizontal": False,
+    "scan_quality_threshold": 50,
+}
+
+
+def load_settings() -> dict:
+    if SETTINGS_FILE.is_file():
+        try:
+            import json
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            merged = dict(DEFAULT_SETTINGS)
+            merged.update(data)
+            return merged
+        except Exception:
+            pass
+    return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(new_settings: dict) -> dict:
+    import json
+    current = load_settings()
+    for k in DEFAULT_SETTINGS:
+        if k in new_settings:
+            if isinstance(DEFAULT_SETTINGS[k], bool):
+                current[k] = bool(new_settings[k])
+            else:
+                try:
+                    current[k] = float(new_settings[k])
+                except (ValueError, TypeError):
+                    pass
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    return current
+

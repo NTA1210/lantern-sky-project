@@ -134,6 +134,22 @@ def delete_oldest_lantern() -> dict | None:
     return record
 
 
+def delete_oldest_lanterns(count: int) -> list[dict]:
+    """Delete the N oldest created lanterns (FIFO)."""
+    if count <= 0:
+        return []
+    lanterns = sorted(config.LANTERNS_DIR.glob("*.png"), key=lambda item: item.stat().st_mtime)
+    to_delete = lanterns[:count]
+    deleted_records = []
+    for item in to_delete:
+        record = _parse_lantern_path(item)
+        item.unlink(missing_ok=True)
+        (config.ORIGINAL_DIR / f"{record['id']}.jpg").unlink(missing_ok=True)
+        (config.CORRECTED_DIR / f"{record['id']}.png").unlink(missing_ok=True)
+        deleted_records.append(record)
+    return deleted_records
+
+
 def delete_latest_lantern() -> dict | None:
     """Delete the most recently created lantern."""
     lanterns = sorted(config.LANTERNS_DIR.glob("*.png"), key=lambda item: item.stat().st_mtime)

@@ -15,6 +15,17 @@ def open_browser():
 
 
 if __name__ == "__main__":
-    threading.Timer(1.2, open_browser).start()
+    if os.environ.get("LANTERN_NO_BROWSER") != "1" and not os.environ.get("LANTERN_BROWSER_OPENED"):
+        os.environ["LANTERN_BROWSER_OPENED"] = "1"
+        threading.Timer(1.0, open_browser).start()
+
     reload_enabled = os.environ.get("LANTERN_RELOAD", "1") == "1"
-    uvicorn.run("backend.app:app", host=config.HOST, port=config.PORT, reload=reload_enabled)
+    uvicorn.run(
+        "backend.app:app",
+        host=config.HOST,
+        port=config.PORT,
+        reload=reload_enabled,
+        reload_dirs=["backend", "frontend"],
+        reload_excludes=["runtime/*", "self_test_output/*", "*.png", "*.jpg", "*.json"],
+        timeout_graceful_shutdown=1,
+    )

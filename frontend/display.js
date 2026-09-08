@@ -26,6 +26,12 @@ let last = performance.now();
 let backgroundImg = null;
 let totalCount = 0;
 
+let settings = {
+  conveyor_speed: 1.0,
+  sway_amplitude: 1.0,
+  sway_speed: 1.0,
+};
+
 const stars = [];
 const lanternIds = new Set();
 const imageCache = new Map();
@@ -347,13 +353,17 @@ function drawLantern(record, x, index, t, pitch, lane) {
   const phase = hashText(record.id || record.url) * Math.PI * 2;
   const bob = Math.sin(t * 1.25 + phase) * 3.5;
   
-  // Dynamic wind sway & drag pendulum angle
+  // Dynamic wind sway & drag pendulum angle with real-time settings
+  const swayAmp = settings.sway_amplitude !== undefined ? settings.sway_amplitude : 1.0;
+  const swaySpd = settings.sway_speed !== undefined ? settings.sway_speed : 1.0;
+  const speedMult = Math.max(0.1, settings.conveyor_speed || 1.0);
+
   // 1. Natural wind gusts across screen
-  const windGust = Math.sin(t * 0.75 + (x / Math.max(W, 1)) * 3.0) * 0.045;
+  const windGust = Math.sin(t * 0.75 * swaySpd + (x / Math.max(W, 1)) * 3.0) * 0.045 * swayAmp;
   // 2. Harmonic pendulum swing (con lắc đung đưa nhịp nhàng rõ nét)
-  const pendulumSway = Math.sin(t * 1.55 + phase) * 0.085 + Math.sin(t * 2.7 + phase * 1.4) * 0.025;
+  const pendulumSway = (Math.sin(t * 1.55 * swaySpd + phase) * 0.085 + Math.sin(t * 2.7 * swaySpd + phase * 1.4) * 0.025) * swayAmp;
   // 3. Inertial tilt trailing behind the moving rope
-  const dragTilt = (lane.direction < 0 ? 0.055 : -0.055) * (lane.speed / 22);
+  const dragTilt = (lane.direction < 0 ? 0.055 : -0.055) * ((lane.speed * speedMult) / 22) * Math.min(1.5, swayAmp + 0.3);
   const totalAngle = dragTilt + pendulumSway + windGust;
 
   const { gap } = laneGeometry(index);
@@ -414,8 +424,9 @@ function drawLane(lane, index, dt, t) {
   const count = lane.records.length;
   const cycleWidth = count < VISIBLE_SLOT_COUNT ? VISIBLE_SLOT_COUNT * pitch : count * pitch;
 
-  // Advance rope conveyor distance
-  lane.distance = mod(lane.distance + lane.speed * dt, cycleWidth);
+  // Advance rope conveyor distance with real-time speed multiplier
+  const speedMult = Math.max(0.1, settings.conveyor_speed || 1.0);
+  lane.distance = mod(lane.distance + lane.speed * speedMult * dt, cycleWidth);
   const signedDistance = lane.direction < 0 ? -lane.distance : lane.distance;
 
   // Draw moving rope and attached moving LED bulbs
@@ -500,6 +511,9 @@ async function syncState() {
     if (!response.ok) throw Error(`Display state ${response.status}`);
     const state = await response.json();
     await loadBackground(state.backgroundUrl || null);
+    if (state.settings) {
+      Object.assign(settings, state.settings);
+    }
     
     clearAllRecords();
     const items = [...(state.lanterns || [])];
@@ -592,6 +606,9 @@ function connect() {
   ws.onmessage = (event) => {
     try {
       const payload = JSON.parse(event.data);
+      if (payload.type === 'settings_updated' && payload.settings) {
+        Object.assign(settings, payload.settings);
+      }
       if (payload.type === 'lantern_created' && payload.url) {
         addRecord(payload, false);
         if (Number.isFinite(Number(payload.totalCount))) setTotal(payload.totalCount);
@@ -608,6 +625,14 @@ function connect() {
         fadeOutOldestLantern(duration);
         if (Number.isFinite(Number(payload.totalCount))) setTotal(payload.totalCount);
         else setTotal(Math.max(0, totalCount - 1));
+      }
+      if (payload.type === 'batch_lanterns_fading_out') {
+        const duration = (payload.duration || 1.0) * 1000;
+        if (Array.isArray(payload.ids)) {
+          payload.ids.forEach((id) => fadeOutLanternById(id, duration));
+        }
+        if (Number.isFinite(Number(payload.totalCount))) setTotal(payload.totalCount);
+        else setTotal(Math.max(0, totalCount - (payload.ids ? payload.ids.length : 0)));
       }
       if (payload.type === 'all_lanterns_fading_out') {
         const duration = (payload.duration || 1.0) * 1000;

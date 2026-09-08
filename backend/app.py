@@ -21,6 +21,7 @@ from .storage import (
     delete_lantern,
     delete_latest_lantern,
     delete_oldest_lantern,
+    delete_oldest_lanterns,
     lantern_count,
     list_lanterns,
     recent_lanterns,
@@ -35,10 +36,14 @@ sequential_delete_task: asyncio.Task | None = None
 sequential_delete_active = False
 
 
-async def _sequential_delete_worker():
+async def _sequential_delete_worker(max_count: int | None = None):
     global sequential_delete_active, sequential_delete_task
+    deleted_so_far = 0
     try:
         while sequential_delete_active:
+            if max_count is not None and deleted_so_far >= max_count:
+                break
+
             total_before = lantern_count()
             if total_before == 0:
                 # No files on disk, tell Display to pop any in-memory/demo lantern
@@ -53,14 +58,15 @@ async def _sequential_delete_worker():
             oldest = delete_oldest_lantern()
             total_after = lantern_count()
             if oldest is not None:
+                deleted_so_far += 1
                 await manager.broadcast({
                     "type": "lantern_fading_out",
                     "id": oldest["id"],
                     "duration": 1.0,
                     "totalCount": total_after,
                 })
-                # If this was the last lantern on disk, sleep 1.0s for the fade-out animation to complete, then exit loop
-                if total_after == 0:
+                # If this was the last lantern on disk or reached max_count, sleep 1.0s for the fade-out animation to complete, then exit loop
+                if total_after == 0 or (max_count is not None and deleted_so_far >= max_count):
                     await asyncio.sleep(1.0)
                     break
                 await asyncio.sleep(1.0)
@@ -148,11 +154,51 @@ def display():
     return FileResponse(config.FRONTEND_DIR / "display.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
+@app.get("/favicon.ico")
+def favicon():
+    icon_path = config.FRONTEND_DIR / "favicon.ico"
+    if icon_path.exists():
+        return FileResponse(icon_path, media_type="image/x-icon")
+    return FileResponse(config.FRONTEND_DIR / "favicon.svg", media_type="image/svg+xml")
+
+
 from pydantic import BaseModel
 
 
 class CameraSelectRequest(BaseModel):
     index: int
+
+
+class SettingsUpdateRequest(BaseModel):
+    conveyor_speed: float | None = None
+    sway_amplitude: float | None = None
+    sway_speed: float | None = None
+    auto_scan_seconds: float | None = None
+    camera_flip_horizontal: bool | None = None
+    scan_quality_threshold: float | None = None
+
+
+@app.get("/api/settings")
+def get_settings():
+    return config.load_settings()
+
+
+@app.post("/api/settings")
+async def update_settings(payload: SettingsUpdateRequest):
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    saved = config.save_settings(updates)
+    if "camera_flip_horizontal" in updates:
+        scanner.set_flip_horizontal(updates["camera_flip_horizontal"])
+    await manager.broadcast({"type": "settings_updated", "settings": saved})
+    return {"ok": True, "settings": saved}
+
+
+@app.post("/api/settings/reset")
+async def reset_settings():
+    saved = config.save_settings(config.DEFAULT_SETTINGS)
+    scanner.set_flip_horizontal(config.DEFAULT_SETTINGS.get("camera_flip_horizontal", False))
+    await manager.broadcast({"type": "settings_updated", "settings": saved})
+    return {"ok": True, "settings": saved}
 
 
 @app.get("/api/cameras")
@@ -320,6 +366,14 @@ async def background(request: Request):
     return {"ok": True, "url": url}
 
 
+@app.delete("/api/background")
+async def reset_background():
+    for old in config.BACKGROUND_DIR.glob("current.*"):
+        old.unlink(missing_ok=True)
+    await manager.broadcast({"type": "background_changed", "url": None})
+    return {"ok": True, "url": None}
+
+
 @app.get("/api/recent")
 def recent(limit: int = 12):
     return recent_lanterns(limit)
@@ -330,15 +384,24 @@ def lanterns():
     return {"totalCount": lantern_count(), "lanterns": list_lanterns()}
 
 
+class SequentialDeleteRequest(BaseModel):
+    count: int | None = None
+
+
 @app.post("/api/lanterns/sequential-delete/start")
-async def start_sequential_delete():
+async def start_sequential_delete(payload: SequentialDeleteRequest | None = None):
     global sequential_delete_active, sequential_delete_task
+    max_count = payload.count if (payload and payload.count and payload.count > 0) else None
     if sequential_delete_active and sequential_delete_task and not sequential_delete_task.done():
-        return {"ok": True, "active": True, "message": "Đang chạy xóa lần lượt."}
+        return {"ok": True, "active": True, "message": "Đang chạy xóa lần lượt.", "maxCount": max_count}
     sequential_delete_active = True
-    sequential_delete_task = asyncio.create_task(_sequential_delete_worker())
-    await manager.broadcast({"type": "sequential_delete_started", "totalCount": lantern_count()})
-    return {"ok": True, "active": True, "totalCount": lantern_count()}
+    sequential_delete_task = asyncio.create_task(_sequential_delete_worker(max_count=max_count))
+    await manager.broadcast({
+        "type": "sequential_delete_started",
+        "totalCount": lantern_count(),
+        "maxCount": max_count,
+    })
+    return {"ok": True, "active": True, "totalCount": lantern_count(), "maxCount": max_count}
 
 
 @app.post("/api/lanterns/sequential-delete/stop")
@@ -358,14 +421,28 @@ def sequential_delete_status():
 
 
 @app.delete("/api/lanterns")
-async def clear_all_lanterns():
+async def clear_all_lanterns(count: int | None = None):
     global sequential_delete_active, sequential_delete_task
     sequential_delete_active = False
     if sequential_delete_task and not sequential_delete_task.done():
         sequential_delete_task.cancel()
-    deleted_count = delete_all_lanterns()
-    await manager.broadcast({"type": "all_lanterns_fading_out", "duration": 1.0, "totalCount": 0})
-    return {"ok": True, "deletedCount": deleted_count, "totalCount": 0}
+    
+    total = lantern_count()
+    if count is None or count <= 0 or count >= total:
+        deleted_count = delete_all_lanterns()
+        await manager.broadcast({"type": "all_lanterns_fading_out", "duration": 1.0, "totalCount": 0})
+        return {"ok": True, "deletedCount": deleted_count, "totalCount": 0}
+    else:
+        deleted_records = delete_oldest_lanterns(count)
+        remaining = lantern_count()
+        deleted_ids = [r["id"] for r in deleted_records]
+        await manager.broadcast({
+            "type": "batch_lanterns_fading_out",
+            "ids": deleted_ids,
+            "duration": 1.0,
+            "totalCount": remaining,
+        })
+        return {"ok": True, "deletedCount": len(deleted_records), "totalCount": remaining}
 
 
 @app.post("/api/lanterns/delete-latest")
@@ -405,6 +482,7 @@ def display_state():
         "backgroundUrl": _background_url(),
         "lanterns": lanterns,
         "totalCount": len(lanterns),
+        "settings": config.load_settings(),
     }
 
 

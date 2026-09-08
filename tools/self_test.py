@@ -185,6 +185,12 @@ def main():
 
         verify_negative_cases(processor, frame, detected, variant_key)
 
+        # Verify mirror mode / flipped camera detection
+        detected_flipped = processor.detect(cv2.flip(frame, 1))
+        identified_flipped = processor.identify_variant(detected_flipped, require_complete=True)
+        if identified_flipped is None or identified_flipped.key != variant_key:
+            raise RuntimeError(f"Mirrored frame variant detection failed for {variant_key}: {sorted(detected_flipped)}")
+
         rectified = processor.rectify(frame, detected, identified)
         lantern = processor.extract_lantern(rectified, variant_key)
         cv2.imwrite(str(OUT / f"{variant_key}_canonical.png"), page)
@@ -192,7 +198,7 @@ def main():
         cv2.imwrite(str(OUT / f"{variant_key}_rectified.png"), rectified)
         cv2.imwrite(str(OUT / f"{variant_key}_lantern.png"), lantern)
         frames[variant_key] = frame
-        print(f"SELF TEST PASSED: {variant_key} markers={sorted(detected)}")
+        print(f"SELF TEST PASSED: {variant_key} markers={sorted(detected)} (mirrored={sorted(detected_flipped)})")
 
     verify_processing_and_storage(processor, frames)
     print("PROCESSING/STORAGE TEST PASSED")

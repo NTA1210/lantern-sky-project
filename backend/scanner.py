@@ -1,3 +1,4 @@
+import atexit
 import json
 import logging
 import platform
@@ -41,6 +42,7 @@ class ScannerService:
         self.thread = None
         self.running = False
         self.lock = threading.Lock()
+        self.preview_condition = threading.Condition(self.lock)
         self.frame = None
         self.preview = None
         self.detected = {}
@@ -49,6 +51,15 @@ class ScannerService:
         self.h = 0
         self.fps = 0.0
         self.camera_open = False
+        self.flip_horizontal = config.load_settings().get("camera_flip_horizontal", False)
+        atexit.register(self.stop)
+
+    def __del__(self):
+        self.stop()
+
+    def set_flip_horizontal(self, value: bool) -> None:
+        with self.lock:
+            self.flip_horizontal = bool(value)
 
     @staticmethod
     def _backend_candidates():
@@ -146,9 +157,11 @@ class ScannerService:
 
     @staticmethod
     def get_available_cameras(max_probe: int = 6) -> list[dict]:
-        """Retrieve real camera device names from macOS system_profiler or fallback."""
+        """Retrieve real camera device names from OS (macOS/Windows) or fallback."""
         cameras = []
-        if platform.system() == "Darwin":
+        system = platform.system()
+
+        if system == "Darwin":
             try:
                 cmd = ["system_profiler", "-json", "SPCameraDataType"]
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=2.5)
@@ -166,6 +179,51 @@ class ScannerService:
                         })
             except Exception:
                 logger.exception("system_profiler_camera_failed")
+
+        elif system == "Windows":
+            try:
+                # Approach 1: Query Windows.Devices.Enumeration (VideoCapture device class)
+                ps_cmd = (
+                    "[Windows.Devices.Enumeration.DeviceInformation, Windows.Foundation, ContentType = WindowsRuntime] | Out-Null; "
+                    "[Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync([Windows.Devices.Enumeration.DeviceClass]::VideoCapture).GetAwaiter().GetResult() | "
+                    "ForEach-Object { $_.Name }"
+                )
+                res = subprocess.run(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                    capture_output=True, text=True, timeout=3.5
+                )
+                lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+
+                # Approach 2 fallback: PnP devices with class Camera or Image
+                if not lines:
+                    fallback_cmd = (
+                        "Get-CimInstance Win32_PnPEntity | "
+                        "Where-Object { $_.PNPClass -in @('Camera','Image') } | "
+                        "ForEach-Object { $_.Caption }"
+                    )
+                    res = subprocess.run(
+                        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", fallback_cmd],
+                        capture_output=True, text=True, timeout=3.5
+                    )
+                    lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+
+                seen = set()
+                unique_names = []
+                for name in lines:
+                    if name not in seen:
+                        seen.add(name)
+                        unique_names.append(name)
+
+                for idx, name in enumerate(unique_names):
+                    is_active = (idx == config.CAMERA_INDEX)
+                    cameras.append({
+                        "index": idx,
+                        "label": f"[{idx}] {name}{' — Đang dùng' if is_active else ''}",
+                        "name": name,
+                        "active": is_active,
+                    })
+            except Exception:
+                logger.exception("windows_camera_enum_failed")
 
         if not cameras:
             for idx in range(max_probe):
@@ -187,6 +245,8 @@ class ScannerService:
 
     def stop(self):
         self.running = False
+        with self.lock:
+            self.preview_condition.notify_all()
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.5)
         self._close_camera()
@@ -229,9 +289,11 @@ class ScannerService:
                 continue
 
             read_failures = 0
+            if self.flip_horizontal:
+                frame = cv2.flip(frame, 1)
+
             with self.lock:
                 # Keep the newest full-resolution frame for the final scan.
-                # Preview processing below is intentionally decimated.
                 self.frame = frame
                 self.error = None
                 self.camera_open = True
@@ -254,6 +316,7 @@ class ScannerService:
                     self.preview = jpeg.tobytes() if ok_jpeg else None
                     self.error = None
                     self.camera_open = True
+                    self.preview_condition.notify_all()
                 last_preview_at = now
             except Exception as exc:
                 logger.exception("camera_processing_error")
@@ -268,6 +331,8 @@ class ScannerService:
         color = (80, 220, 100) if ready else (40, 170, 255)
 
         for marker_id, points in detected.items():
+            if marker_id not in range(16):
+                continue
             poly = np.round(points).astype(np.int32).reshape((-1, 1, 2))
             marker_color = color if marker_id in expected else (160, 160, 160)
             cv2.polylines(frame, [poly], True, marker_color, 3, cv2.LINE_AA)
@@ -353,9 +418,16 @@ class ScannerService:
         return self.scan_processor.process(frame)
 
     def mjpeg_generator(self):
+        last_frame = None
         while self.running:
-            with self.lock:
-                preview = self.preview
-            if preview:
-                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + preview + b"\r\n"
-            time.sleep(1 / max(1.0, config.PREVIEW_FPS))
+            with self.preview_condition:
+                self.preview_condition.wait_for(
+                    lambda: not self.running or self.preview != last_frame,
+                    timeout=0.2,
+                )
+                if not self.running:
+                    break
+                frame_bytes = self.preview
+                last_frame = frame_bytes
+            if frame_bytes:
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"

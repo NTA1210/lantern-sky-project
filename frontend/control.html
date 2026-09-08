@@ -3,136 +3,409 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Lantern Sky - Control</title>
-  <link rel="stylesheet" href="/static/styles.css?v=8">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="alternate icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=13">
 </head>
 <body class="control-page">
+  <div class="ambient-glow ambient-1"></div>
+  <div class="ambient-glow ambient-2"></div>
+
   <main class="shell">
+    <!-- TOPBAR / NAVIGATION -->
     <header class="topbar">
-      <div>
-        <p class="eyebrow">LANTERN SKY</p>
-        <h1>Scanner Control</h1>
-        <p class="muted">Đặt toàn bộ template trong camera. Hệ thống tự nhận dạng mẫu qua 4 marker rồi mới cho phép Scan.</p>
+      <div class="brand-cluster">
+        <div class="brand-logo">🏮</div>
+        <div>
+          <div class="brand-badge-row">
+            <span class="eyebrow">PHỐ ĐÈN KÝ ỨC</span>
+            <span class="status-pill live-pill"><span class="pulse-dot"></span>HỆ THỐNG SẴN SÀNG</span>
+          </div>
+          <h1>Trung Tâm Điều Khiển</h1>
+        </div>
       </div>
-      <a class="button secondary" href="/display" target="_blank">Open Display</a>
+      <div class="topbar-actions">
+        <button id="openGuideBtn" class="button nav-btn" title="Hướng dẫn kết nối máy ảnh/camera">
+          <span class="btn-icon">ℹ️</span> Hướng dẫn thiết bị
+        </button>
+        <button id="openSettingsBtn" class="button nav-btn" title="Cài đặt thông số hiệu ứng & thời gian scan">
+          <span class="btn-icon">⚙️</span> Cài đặt thông số
+        </button>
+        <a class="button primary glow-btn" href="/display" target="_blank">
+          <span>Màn Hình Chiếu</span>
+          <span class="arrow-icon">↗</span>
+        </a>
+      </div>
     </header>
 
+    <!-- MAIN OPERATOR DASHBOARD GRID -->
     <section class="grid">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Camera Scanner</h2>
-            <p id="cameraMeta" class="muted small">Đang kết nối...</p>
-            <p id="templateMeta" class="muted small">Waiting for template...</p>
+      <!-- CỘT TRÁI: CAMERA SCANNER & ARUCO DETECTION -->
+      <div class="column-stack">
+        <div class="panel glass-panel scanner-card">
+          <div class="panel-head">
+            <div class="panel-title-group">
+              <div class="panel-icon">📷</div>
+              <div>
+                <h2>Camera Quét Lồng Đèn</h2>
+                <p id="cameraMeta" class="muted small">Đang kết nối camera...</p>
+              </div>
+            </div>
+            <div class="panel-head-actions">
+              <div class="select-wrapper">
+                <select id="cameraSelect" class="camera-select" title="Chọn nguồn Camera">
+                  <option value="0">Đang quét thiết bị...</option>
+                </select>
+              </div>
+              <button id="refreshCamerasBtn" class="button-icon" title="Quét lại thiết bị camera">🔄</button>
+              <span id="readyBadge" class="badge">Checking</span>
+            </div>
           </div>
-          <div class="panel-head-actions">
-            <select id="cameraSelect" class="camera-select" title="Chọn nguồn Camera">
-              <option value="0">Đang quét thiết bị...</option>
-            </select>
-            <button id="refreshCamerasBtn" class="button-icon" title="Quét lại thiết bị camera">🔄</button>
-            <span id="readyBadge" class="badge">Checking</span>
+
+          <!-- KHUNG STREAM CAMERA -->
+          <div id="cameraWrap" class="camera-wrap is-loading">
+            <img id="cameraStream" src="/api/camera/stream" alt="Camera preview">
+            <div class="scan-laser-line"></div>
+            <div id="cameraEmpty" class="camera-empty">
+              <div class="empty-spinner"></div>
+              <strong>Đang kết nối Camera</strong>
+              <span>Đang nhận luồng hình ảnh từ thiết bị...</span>
+            </div>
+            <div class="camera-overlay-info">
+              <span id="templateMeta" class="template-tag">Đang tìm mẫu template...</span>
+            </div>
           </div>
-        </div>
 
-        <div id="cameraWrap" class="camera-wrap is-loading">
-          <img id="cameraStream" src="/api/camera/stream" alt="Camera preview">
-          <div id="cameraEmpty" class="camera-empty">
-            <strong>Connecting to camera</strong>
-            <span>Waiting for preview frames...</span>
+          <!-- MARKER STATUS & AUTO SCAN -->
+          <div class="marker-row" aria-label="Expected marker IDs">
+            <div class="marker-block">
+              <span class="section-label">MARKERS GÓC:</span>
+              <div class="markers-group">
+                <span class="marker" data-slot="0">–</span>
+                <span class="marker" data-slot="1">–</span>
+                <span class="marker" data-slot="2">–</span>
+                <span class="marker" data-slot="3">–</span>
+              </div>
+            </div>
+            <label class="auto-scan-toggle" title="Tự động chụp khi nhận đủ 4 marker">
+              <input id="autoScanToggle" type="checkbox" checked>
+              <span class="toggle-custom"></span>
+              <span id="autoScanLabel" class="toggle-text">Tự động Scan (2.0s)</span>
+            </label>
           </div>
-        </div>
 
-        <div class="marker-row" aria-label="Expected marker IDs">
-          <div class="markers-group">
-            <span class="marker" data-slot="0">–</span>
-            <span class="marker" data-slot="1">–</span>
-            <span class="marker" data-slot="2">–</span>
-            <span class="marker" data-slot="3">–</span>
+          <!-- THANH ĐẾM NGƯỢC AUTO SCAN -->
+          <div id="countdownTrack" class="countdown-track">
+            <div id="countdownBar" class="countdown-bar"></div>
           </div>
-          <label class="auto-scan-toggle" title="Tự động chụp sau 2 giây khi nhận đủ 4 marker">
-            <input id="autoScanToggle" type="checkbox" checked>
-            <span>Tự động Scan (2s)</span>
-          </label>
-        </div>
 
-        <div id="countdownTrack" class="countdown-track">
-          <div id="countdownBar" class="countdown-bar"></div>
+          <!-- ACTION BUTTONS -->
+          <div class="actions">
+            <button id="scanButton" class="button primary scan-action-btn" disabled>
+              <span class="btn-icon">⚡</span> Scan Lồng Đèn
+            </button>
+            <button id="demoButton" class="button secondary demo-action-btn">
+              <span class="btn-icon">✨</span> Thả Đèn Demo
+            </button>
+          </div>
+          <p id="message" class="message"></p>
         </div>
-
-        <div class="actions">
-          <button id="scanButton" class="button primary" disabled>Scan lantern</button>
-          <button id="demoButton" class="button secondary">Send demo lantern</button>
-        </div>
-        <p id="message" class="message"></p>
       </div>
 
-      <aside class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Last result</h2>
-            <p class="muted small">Chỉ PNG cuối cùng được public sang Display; ảnh camera gốc không được expose.</p>
+      <!-- CỘT PHẢI: KẾT QUẢ SCAN + BACKGROUND MÀN CHIẾU + QUẢN LÝ -->
+      <aside class="column-stack">
+        <!-- BACKGROUND MÀN HÌNH CHIẾU & LIVE 16:9 PREVIEW -->
+        <div class="panel glass-panel">
+          <div class="panel-head">
+            <div class="panel-title-group">
+              <div class="panel-icon">🌌</div>
+              <div>
+                <h2>Background Màn Hình Chiếu</h2>
+                <p id="backgroundMessage" class="muted small">Xem trước bố cục 16:9 trên sân khấu.</p>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="result-stage">
-          <img id="resultImage" src="/static/sample_lantern.png" alt="Last lantern">
-        </div>
 
-        <div class="upload-box">
-          <div>
-            <h2>Quản lý lồng đèn đã quét</h2>
-            <p id="lanternManageMeta" class="muted small">Tổng số đèn: 0</p>
+          <div class="stage-preview-container">
+            <div id="stagePreviewWrap" class="stage-preview-wrap">
+              <img id="stagePreviewImg" class="stage-preview-img" src="" alt="Background preview" style="display: none;">
+              <div id="stagePreviewFallback" class="stage-preview-fallback">
+                <div class="fallback-sky">
+                  <span class="stars-pattern">✨ Bầu Trời Sao Mặc Định ✨</span>
+                </div>
+              </div>
+              <!-- Mock dây treo lồng đèn -->
+              <div class="mock-wire-overlay">
+                <div class="mock-wire" style="top: 25%;"><span></span><span></span><span></span><span></span></div>
+                <div class="mock-wire" style="top: 48%;"><span></span><span></span><span></span><span></span></div>
+                <div class="mock-wire" style="top: 72%;"><span></span><span></span><span></span><span></span></div>
+              </div>
+            </div>
+            <div class="stage-preview-meta">
+              <span id="currentBgLabel">Nền hiện tại: Mặc định</span>
+            </div>
           </div>
-          <div class="lantern-manage-actions">
-            <button id="toggleSequentialBtn" class="button secondary">▶ Xóa lần lượt (1s/đèn)</button>
-            <button id="deleteAllBtn" class="button danger">Xóa tất cả lồng đèn</button>
-          </div>
-          <div id="recentGallery" class="recent-list"></div>
-        </div>
 
-        <div class="upload-box">
-          <div>
-            <h2>Display background</h2>
-            <p id="backgroundMessage" class="muted small">Chọn ảnh JPG, PNG hoặc WEBP.</p>
-          </div>
-          <label class="button secondary upload-button">
-            <input id="backgroundInput" type="file" accept="image/jpeg,image/png,image/webp">
-            Upload background
-          </label>
-        </div>
-
-        <div class="upload-box">
-          <div>
-            <h2>Printable lantern templates</h2>
-            <p class="muted small">In A4 ở 100% / Actual Size. Mỗi hình dùng một bộ marker riêng để scanner tự nhận dạng silhouette.</p>
-          </div>
-          <div class="template-links">
-            <a class="button secondary" href="/templates/lantern_template.png" target="_blank">Classic</a>
-            <a class="button secondary" href="/templates/lantern_template_balloon.png" target="_blank">Balloon</a>
-            <a class="button secondary" href="/templates/lantern_template_round.png" target="_blank">Round</a>
-            <a class="button secondary" href="/templates/lantern_template_rectangle.png" target="_blank">Rectangle</a>
+          <div class="bg-action-row">
+            <label class="button primary upload-button glow-subtle">
+              <input id="backgroundInput" type="file" accept="image/jpeg,image/png,image/webp">
+              <span>⬆ Tải ảnh Background mới</span>
+            </label>
+            <button id="resetBackgroundBtn" class="button secondary">Về nền mặc định</button>
           </div>
         </div>
 
-        <dl class="facts">
-          <div>
-            <dt>Pipeline</dt>
-            <dd>ArUco → Homography → Variant mask → PNG alpha</dd>
+        <!-- LỒNG ĐÈN VỪA QUÉT & QUẢN LÝ LỒNG ĐÈN -->
+        <div class="panel glass-panel">
+          <div class="panel-head">
+            <div class="panel-title-group">
+              <div class="panel-icon">🏮</div>
+              <div>
+                <h2>Quản Lý Lồng Đèn</h2>
+                <p id="lanternManageMeta" class="muted small">Đang chiếu: 0 lồng đèn</p>
+              </div>
+            </div>
           </div>
-          <div>
-            <dt>External camera</dt>
-            <dd>Hỗ trợ camera USB/UVC được hệ điều hành nhận như webcam, kể cả Sony có USB Streaming hoặc camera qua HDMI capture card.</dd>
+
+          <div class="lantern-manage-body">
+            <!-- Hàng trên: Ảnh vừa quét nhỏ gọn + Cài đặt số lượng xóa -->
+            <div class="manage-top-grid">
+              <div class="result-stage" title="Ảnh PNG lồng đèn gần nhất">
+                <img id="resultImage" src="/static/sample_lantern.png" alt="Last lantern">
+                <span class="result-watermark">Vừa quét</span>
+              </div>
+
+              <!-- Cài đặt số lượng xóa tùy chọn (Optional Quantity) -->
+              <div class="delete-qty-control">
+                <div class="qty-header-line">
+                  <span class="section-label">SỐ LƯỢNG:</span>
+                  <button type="button" id="qtyAllBtn" class="pill-badge active" title="Nhấp để chuyển về xóa toàn bộ">Toàn bộ</button>
+                </div>
+                <div class="qty-input-wrap">
+                  <button type="button" id="qtyMinusBtn" class="qty-step-btn" title="Giảm số lượng">－</button>
+                  <input id="deleteQtyInput" type="number" min="1" max="999" placeholder="Toàn bộ" class="qty-num-input">
+                  <span class="qty-unit">đèn</span>
+                  <button type="button" id="qtyPlusBtn" class="qty-step-btn" title="Tăng số lượng">＋</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2 Nút hành động xóa -->
+            <div class="lantern-manage-actions">
+              <button id="toggleSequentialBtn" class="button secondary full-w-btn">▶ Xóa lần lượt (1s/đèn)</button>
+              <button id="deleteAllBtn" class="button danger full-w-btn">Xóa tất cả lồng đèn</button>
+            </div>
+
+            <!-- Danh sách đèn gần đây -->
+            <div class="recent-gallery-wrap">
+              <span class="section-label">ĐÈN VỪA QUÉT GẦN ĐÂY:</span>
+              <div id="recentGallery" class="recent-list"></div>
+            </div>
           </div>
-          <div>
-            <dt>Tip</dt>
-            <dd>Ánh sáng đều, giấy phẳng, không che marker và khóa focus/exposure nếu camera hỗ trợ.</dd>
-          </div>
-        </dl>
+        </div>
       </aside>
     </section>
   </main>
 
+  <!-- POPUP 1: MODAL CÀI ĐẶT THÔNG SỐ HIỆU ỨNG (SETTINGS MODAL) -->
+  <div id="settingsModal" class="modal-overlay hidden">
+    <div class="modal-card modal-card-large">
+      <div class="modal-header-row">
+        <div class="modal-title-with-icon">
+          <span class="modal-icon-badge">⚙️</span>
+          <div>
+            <h3>Cài Đặt Hiệu Ứng & Quét</h3>
+            <p class="muted small" style="margin: 2px 0 0;">Điều chỉnh thông số chuyển động trên màn hình chiếu và độ nhạy scan.</p>
+          </div>
+        </div>
+        <button id="settingsModalCloseBtn" class="modal-close-icon" title="Đóng">✕</button>
+      </div>
+
+      <div class="modal-settings-list">
+        <!-- Thông số 1: Tốc độ chạy dây -->
+        <div class="modal-setting-row">
+          <div class="modal-setting-info">
+            <div class="setting-title-line">
+              <strong>Tốc độ chạy dây</strong>
+              <span class="tag-badge">Conveyor Speed</span>
+            </div>
+            <span class="muted small">Tốc độ lồng đèn di chuyển qua lại trên dây cáp</span>
+          </div>
+          <div class="stepper-wrap">
+            <button type="button" class="step-btn" data-target="conveyorSpeedInput" data-step="-0.1">－</button>
+            <input id="conveyorSpeedInput" type="number" min="0.2" max="3.0" step="0.1" value="1.0" class="num-input">
+            <span class="input-unit">x</span>
+            <button type="button" class="step-btn" data-target="conveyorSpeedInput" data-step="0.1">＋</button>
+          </div>
+          <input id="conveyorSpeedSlider" type="range" min="0.2" max="3.0" step="0.1" value="1.0" class="slider-control modal-slider">
+        </div>
+
+        <!-- Thông số 2: Độ rung lắc lồng đèn -->
+        <div class="modal-setting-row">
+          <div class="modal-setting-info">
+            <div class="setting-title-line">
+              <strong>Độ rung lắc lồng đèn</strong>
+              <span class="tag-badge">Sway Amplitude</span>
+            </div>
+            <span class="muted small">Biên độ đung đưa theo gió tự nhiên của lồng đèn</span>
+          </div>
+          <div class="stepper-wrap">
+            <button type="button" class="step-btn" data-target="swayAmpInput" data-step="-0.1">－</button>
+            <input id="swayAmpInput" type="number" min="0.0" max="3.0" step="0.1" value="1.0" class="num-input">
+            <span class="input-unit">x</span>
+            <button type="button" class="step-btn" data-target="swayAmpInput" data-step="0.1">＋</button>
+          </div>
+          <input id="swayAmpSlider" type="range" min="0.0" max="3.0" step="0.1" value="1.0" class="slider-control modal-slider">
+        </div>
+
+        <!-- Thông số 3: Tốc độ đung đưa theo gió -->
+        <div class="modal-setting-row">
+          <div class="modal-setting-info">
+            <div class="setting-title-line">
+              <strong>Tốc độ đung đưa gió</strong>
+              <span class="tag-badge">Sway Frequency</span>
+            </div>
+            <span class="muted small">Nhịp dao động nhanh hay êm đềm của con lắc</span>
+          </div>
+          <div class="stepper-wrap">
+            <button type="button" class="step-btn" data-target="swaySpeedInput" data-step="-0.1">－</button>
+            <input id="swaySpeedInput" type="number" min="0.2" max="2.5" step="0.1" value="1.0" class="num-input">
+            <span class="input-unit">x</span>
+            <button type="button" class="step-btn" data-target="swaySpeedInput" data-step="0.1">＋</button>
+          </div>
+          <input id="swaySpeedSlider" type="range" min="0.2" max="2.5" step="0.1" value="1.0" class="slider-control modal-slider">
+        </div>
+
+        <!-- Thông số 4: Thời gian tự động Scan -->
+        <div class="modal-setting-row">
+          <div class="modal-setting-info">
+            <div class="setting-title-line">
+              <strong>Thời gian giữ tự động Scan</strong>
+              <span class="tag-badge">Hold Time</span>
+            </div>
+            <span class="muted small">Thời gian giữ đủ 4 marker trước khi tự động chụp</span>
+          </div>
+          <div class="stepper-wrap">
+            <button type="button" class="step-btn" data-target="autoScanTimeInput" data-step="-0.5">－</button>
+            <input id="autoScanTimeInput" type="number" min="0.5" max="5.0" step="0.5" value="2.0" class="num-input">
+            <span class="input-unit">s</span>
+            <button type="button" class="step-btn" data-target="autoScanTimeInput" data-step="0.5">＋</button>
+          </div>
+          <input id="autoScanTimeSlider" type="range" min="0.5" max="5.0" step="0.5" value="2.0" class="slider-control modal-slider">
+        </div>
+
+        <!-- Thông số 5: Chỉ số chấp nhận quét (Scan Acceptance) -->
+        <div class="modal-setting-row">
+          <div class="modal-setting-info">
+            <div class="setting-title-line">
+              <strong>Chỉ số chấp nhận quét</strong>
+              <span class="tag-badge">Scan Acceptance</span>
+            </div>
+            <span class="muted small">Ngưỡng điểm chất lượng tối thiểu (độ nét, góc phẳng, ánh sáng) để chụp</span>
+          </div>
+          <div class="stepper-wrap">
+            <button type="button" class="step-btn" data-target="scanQualityInput" data-step="-5">－</button>
+            <input id="scanQualityInput" type="number" min="40" max="95" step="5" value="65" class="num-input">
+            <span class="input-unit">%</span>
+            <button type="button" class="step-btn" data-target="scanQualityInput" data-step="5">＋</button>
+          </div>
+          <input id="scanQualitySlider" type="range" min="40" max="95" step="5" value="65" class="slider-control modal-slider">
+        </div>
+
+        <!-- Thông số 6: Lật gương Camera (Mirror Mode) -->
+        <div class="modal-setting-row">
+          <div class="modal-setting-info">
+            <div class="setting-title-line">
+              <strong>Lật gương Camera (Mirror Mode)</strong>
+              <span class="tag-badge">Flip Horizontal</span>
+            </div>
+            <span class="muted small">Lật ngược hình ảnh camera theo chiều ngang giống như soi gương</span>
+          </div>
+          <label class="switch-toggle" title="Bật/Tắt chế độ lật gương camera">
+            <input id="cameraFlipToggle" type="checkbox">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="modal-actions modal-actions-space">
+        <button id="resetSettingsBtn" class="button secondary">Khôi phục mặc định</button>
+        <div class="modal-actions-right">
+          <button id="cancelSettingsBtn" class="button secondary">Hủy bỏ</button>
+          <button id="saveSettingsBtn" class="button primary glow-btn">💾 Lưu & Áp dụng</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- POPUP 2: MODAL HƯỚNG DẪN KẾT NỐI THIẾT BỊ (DEVICE GUIDE MODAL) -->
+  <div id="guideModal" class="modal-overlay hidden">
+    <div class="modal-card modal-card-large">
+      <div class="modal-header-row">
+        <div class="modal-title-with-icon">
+          <span class="modal-icon-badge">ℹ️</span>
+          <div>
+            <h3>Cẩm Nang Kết Nối Thiết Bị Camera</h3>
+            <p class="muted small" style="margin: 2px 0 0;">Hướng dẫn thiết lập các nguồn máy ảnh/webcam tại sự kiện.</p>
+          </div>
+        </div>
+        <button id="guideModalCloseBtn" class="modal-close-icon" title="Đóng">✕</button>
+      </div>
+
+      <div class="guide-modal-body">
+        <div class="guide-cards">
+          <div class="guide-card">
+            <div class="guide-header">
+              <span class="guide-icon">📷</span>
+              <strong>Máy ảnh Sony (Alpha A7, ZV Series, FX3/30...)</strong>
+            </div>
+            <ol class="guide-steps">
+              <li>Cài đặt ứng dụng <strong>Sony Imaging Edge Webcam</strong> trên laptop nếu chưa có.</li>
+              <li>Trên máy ảnh: Vào <strong>Menu</strong> &rarr; <strong>Network / USB</strong> &rarr; <strong>USB Connection</strong> chuyển sang <strong>PC Remote</strong> (hoặc chọn <strong>USB Streaming</strong> trên ZV-E10/A7IV).</li>
+              <li>Dùng cáp <strong>Type-C hỗ trợ truyền dữ liệu</strong> cắm giữa máy ảnh và laptop.</li>
+              <li>Bấm nút <strong>🔄</strong> trên trang Control và chọn <strong>Sony Camera</strong> trong danh sách.</li>
+            </ol>
+          </div>
+
+          <div class="guide-card">
+            <div class="guide-header">
+              <span class="guide-icon">🎥</span>
+              <strong>Webcam USB ngoài & HDMI Capture Card</strong>
+            </div>
+            <ol class="guide-steps">
+              <li>Cắm dây USB webcam hoặc thiết bị HDMI Capture Card vào cổng USB 3.0 của máy tính.</li>
+              <li>Bấm nút <strong>🔄</strong> trên giao diện để hệ thống quét và nhận diện tên thiết bị.</li>
+              <li>Chọn đúng tên webcam hoặc <strong>USB Video Device</strong> trong menu chọn camera.</li>
+            </ol>
+          </div>
+
+          <div class="guide-card">
+            <div class="guide-header">
+              <span class="guide-icon">🖥️</span>
+              <strong>OBS Virtual Camera (Luồng ảo từ OBS)</strong>
+            </div>
+            <ol class="guide-steps">
+              <li>Khởi động phần mềm OBS Studio trên máy tính.</li>
+              <li>Bấm <strong>Start Virtual Camera</strong> ở góc dưới bên phải giao diện OBS.</li>
+              <li>Bấm nút <strong>🔄</strong> trên trang Control và chọn <strong>OBS Virtual Camera</strong>.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions" style="border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 16px;">
+        <button id="guideModalDoneBtn" class="button primary" style="width: 100%;">Đã Hiểu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- POPUP 3: MODAL XÁC NHẬN (CONFIRM MODAL) -->
   <div id="confirmModal" class="modal-overlay hidden">
     <div class="modal-card">
+      <div class="confirm-icon">⚠️</div>
       <h3 id="modalTitle">Xác nhận</h3>
       <p id="modalMessage">Bạn có chắc chắn muốn thực hiện hành động này?</p>
       <div class="modal-actions">
@@ -142,6 +415,44 @@
     </div>
   </div>
 
-  <script src="/static/control.js?v=8"></script>
+  <!-- POPUP 4: MODAL XEM TRƯỚC VÀ XÁC NHẬN BACKGROUND (BACKGROUND PREVIEW MODAL) -->
+  <div id="bgPreviewModal" class="modal-overlay hidden">
+    <div class="modal-card modal-card-large">
+      <div class="modal-header-row">
+        <div class="modal-title-with-icon">
+          <span class="modal-icon-badge">🖼️</span>
+          <div>
+            <h3>Xem Trước Background Màn Chiếu</h3>
+            <p class="muted small" style="margin: 2px 0 0;">Kiểm tra bố cục và tỉ lệ 16:9 trước khi áp dụng lên màn hình chiếu thật.</p>
+          </div>
+        </div>
+        <button id="bgPreviewModalCloseBtn" class="modal-close-icon" title="Đóng">✕</button>
+      </div>
+
+      <div class="bg-modal-preview-wrap">
+        <div class="stage-preview-wrap" style="height: 230px; border-radius: 16px;">
+          <img id="bgModalPreviewImg" class="stage-preview-img" src="" alt="Pending background" style="display: block;">
+          <!-- Mock dây treo lồng đèn -->
+          <div class="mock-wire-overlay">
+            <div class="mock-wire" style="top: 25%;"><span></span><span></span><span></span><span></span></div>
+            <div class="mock-wire" style="top: 48%;"><span></span><span></span><span></span><span></span></div>
+            <div class="mock-wire" style="top: 72%;"><span></span><span></span><span></span><span></span></div>
+          </div>
+        </div>
+        <div class="bg-preview-details">
+          <div class="bg-detail-tag"><strong>Tệp:</strong> <span id="bgModalFileName">–</span></div>
+          <div class="bg-detail-tag"><strong>Dung lượng:</strong> <span id="bgModalFileSize">–</span></div>
+          <div class="bg-detail-tag highlight-tag">Tỉ lệ chuẩn: 16:9</div>
+        </div>
+      </div>
+
+      <div class="modal-actions modal-actions-space" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <button id="bgModalCancelBtn" class="button secondary">✕ Hủy bỏ</button>
+        <button id="bgModalApplyBtn" class="button primary glow-btn">✅ Áp Dụng Lên Màn Chiếu</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/control.js?v=13"></script>
 </body>
 </html>

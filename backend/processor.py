@@ -34,6 +34,10 @@ class ProcessResult:
     corrected_path: Path | None = None
 
 
+# The system only uses markers 0..15 across the 4 templates
+VALID_TEMPLATE_MARKER_IDS = set(range(16))
+
+
 class LanternProcessor:
     def __init__(self):
         self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -43,11 +47,15 @@ class LanternProcessor:
         params.adaptiveThreshWinSizeMax = 23
         params.adaptiveThreshWinSizeStep = 10
         params.adaptiveThreshConstant = 7.0
-        params.minMarkerPerimeterRate = 0.02
+        params.minMarkerPerimeterRate = 0.025
         params.maxMarkerPerimeterRate = 4.0
-        params.polygonalApproxAccuracyRate = 0.05
+        params.polygonalApproxAccuracyRate = 0.03
         params.minCornerDistanceRate = 0.05
         params.minDistanceToBorder = 3
+        params.perspectiveRemovePixelPerCell = 4
+        params.perspectiveRemoveIgnoredMarginPerCell = 0.13
+        params.maxErroneousBitsInBorderRate = 0.25
+        params.errorCorrectionRate = 0.5
         self.detector = cv2.aruco.ArucoDetector(self.dictionary, params)
 
     def detect(self, frame):
@@ -56,7 +64,30 @@ class LanternProcessor:
         found = {}
         if ids is not None:
             for corner, marker_id in zip(corners, ids.flatten().tolist()):
-                found[int(marker_id)] = corner.reshape(4, 2).astype(np.float32)
+                mid = int(marker_id)
+                if mid in VALID_TEMPLATE_MARKER_IDS:
+                    pts = corner.reshape(4, 2).astype(np.float32)
+                    if cv2.isContourConvex(pts.astype(np.int32)) and cv2.contourArea(pts) > 100:
+                        found[mid] = pts
+
+        complete = self.identify_variant(found, require_complete=True)
+        if complete is not None:
+            return found
+
+        # Fallback for mirrored/flipped camera feeds (ArUco bit matrices are non-symmetric)
+        gray_flipped = cv2.flip(gray, 1)
+        corners_f, ids_f, _ = self.detector.detectMarkers(gray_flipped)
+        if ids_f is not None:
+            width = frame.shape[1]
+            for corner, marker_id in zip(corners_f, ids_f.flatten().tolist()):
+                mid = int(marker_id)
+                if mid in VALID_TEMPLATE_MARKER_IDS and mid not in found:
+                    pts = corner.reshape(4, 2).astype(np.float32)
+                    if cv2.isContourConvex(pts.astype(np.int32)) and cv2.contourArea(pts) > 100:
+                        pts[:, 0] = (width - 1) - pts[:, 0]
+                        # In mirrored frame, swap TL<->TR (0<->1) and BL<->BR (3<->2)
+                        reordered = np.array([pts[1], pts[0], pts[3], pts[2]], dtype=np.float32)
+                        found[mid] = reordered
         return found
 
     @staticmethod
@@ -64,7 +95,7 @@ class LanternProcessor:
         marker_ids = detected.keys() if hasattr(detected, "keys") else detected
         return identify_variant(marker_ids, require_complete=require_complete)
 
-    def rectify(self, frame, detected, variant: LanternVariant):
+    def rectify_extended(self, frame, detected, variant: LanternVariant):
         missing = [marker_id for marker_id in variant.marker_ids if marker_id not in detected]
         if missing:
             raise ScanError("Không thấy đủ 4 marker. Thiếu: " + ",".join(map(str, missing)))
@@ -82,7 +113,8 @@ class LanternProcessor:
         homography, inlier_mask = cv2.findHomography(src_array, dst_array, cv2.RANSAC, 6.0)
         if homography is None:
             raise ScanError("Không tính được perspective transform.")
-        if inlier_mask is not None and int(inlier_mask.sum()) < 8:
+        inlier_count = int(inlier_mask.sum()) if inlier_mask is not None else 16
+        if inlier_count < 8:
             raise ScanError("Góc chụp quá méo hoặc marker không ổn định. Hãy đặt giấy phẳng và thử lại.")
 
         rectified = cv2.warpPerspective(
@@ -93,6 +125,10 @@ class LanternProcessor:
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=(255, 255, 255),
         )
+        return rectified, inlier_count
+
+    def rectify(self, frame, detected, variant: LanternVariant):
+        rectified, _ = self.rectify_extended(frame, detected, variant)
         return rectified
 
     @staticmethod
@@ -109,7 +145,7 @@ class LanternProcessor:
         return np.clip(img.astype(np.float32) * gains.reshape(1, 1, 3), 0, 255).astype(np.uint8)
 
     @staticmethod
-    def assess_quality(frame, detected, variant: LanternVariant) -> dict:
+    def assess_quality(frame, detected, variant: LanternVariant, inlier_count: int = 16) -> dict:
         height, width = frame.shape[:2]
         scale = min(1.0, 720.0 / max(width, 1))
         sample = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else frame
@@ -119,19 +155,38 @@ class LanternProcessor:
         frame_area = max(1.0, float(width * height))
         marker_areas = [abs(float(cv2.contourArea(detected[mid]))) / frame_area for mid in variant.marker_ids if mid in detected]
         marker_area = float(np.mean(marker_areas)) if marker_areas else 0.0
+
+        # Sub-score calculations calibrated for standard webcams and USB cameras (0.0 to 1.0)
+        focus_norm = min(1.0, max(0.0, focus_score / 15.0))
+        if 35 <= brightness <= 225:
+            bright_norm = 1.0
+        elif brightness < 35:
+            bright_norm = max(0.0, brightness / 35.0)
+        else:
+            bright_norm = max(0.0, (255 - brightness) / 30.0)
+        inlier_norm = min(1.0, max(0.0, inlier_count / 16.0))
+        distance_norm = min(1.0, max(0.0, marker_area / 0.0002))
+
+        overall_score = round(
+            (focus_norm * 0.35 + bright_norm * 0.20 + inlier_norm * 0.35 + distance_norm * 0.10) * 100.0,
+            1,
+        )
+
         warnings = []
-        if focus_score < 35:
-            warnings.append("Ảnh hơi mờ; giữ giấy/camera ổn định hoặc tăng ánh sáng.")
-        if brightness < 45:
-            warnings.append("Khung hình khá tối; nên tăng ánh sáng mềm.")
-        elif brightness > 225:
-            warnings.append("Khung hình quá sáng; tránh cháy sáng trên giấy.")
-        if marker_area < .00045:
-            warnings.append("Template đang khá xa camera; đưa giấy gần hơn để tăng độ chi tiết.")
+        if focus_score < 12:
+            warnings.append("Ảnh hơi mờ; giữ yên giấy hoặc tăng ánh sáng.")
+        if brightness < 30:
+            warnings.append("Khung hình tối; nên bổ sung ánh sáng.")
+        elif brightness > 235:
+            warnings.append("Khung hình quá sáng; tránh lóa flash trên giấy.")
+        if marker_area < .00025:
+            warnings.append("Template đang khá xa camera; đưa lại gần hơn.")
         return {
+            "overallScore": overall_score,
             "focusScore": round(focus_score, 1),
             "brightness": round(brightness, 1),
             "markerAreaRatio": round(marker_area, 6),
+            "inliers": inlier_count,
             "warnings": warnings,
         }
 
@@ -146,7 +201,7 @@ class LanternProcessor:
         out[alpha == 0, 0:3] = 255
         return out
 
-    def process(self, frame, precomputed_detected=None, precomputed_variant=None):
+    def process(self, frame, precomputed_detected=None, precomputed_variant=None, min_quality_score=None):
         started = time.perf_counter()
         detected = precomputed_detected if precomputed_detected is not None else self.detect(frame)
         variant = precomputed_variant if precomputed_variant is not None else self.identify_variant(detected, require_complete=True)
@@ -157,8 +212,20 @@ class LanternProcessor:
                 raise ScanError(f"Template {partial.label}: thiếu marker {', '.join(map(str, missing))}.")
             raise ScanError("Không nhận diện được template lồng đèn. Hãy đảm bảo đủ 4 marker nằm trong khung hình.")
 
-        quality = self.assess_quality(frame, detected, variant)
-        rectified = self.gentle_white_balance(self.rectify(frame, detected, variant))
+        rectified, inlier_count = self.rectify_extended(frame, detected, variant)
+        rectified = self.gentle_white_balance(rectified)
+        quality = self.assess_quality(frame, detected, variant, inlier_count=inlier_count)
+
+        if min_quality_score is None:
+            min_quality_score = float(config.load_settings().get("scan_quality_threshold", 65))
+
+        if quality["overallScore"] < min_quality_score:
+            warn_detail = f" ({quality['warnings'][0]})" if quality.get("warnings") else ""
+            raise ScanError(
+                f"Chất lượng quét chưa đạt chuẩn ({quality['overallScore']:.0f}% < ngưỡng {min_quality_score:.0f}%).{warn_detail} "
+                "Hãy giữ phẳng giấy và đưa lại gần camera hơn."
+            )
+
         lantern = self.extract_lantern(rectified, variant.key)
 
         scan_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
@@ -178,10 +245,11 @@ class LanternProcessor:
         # between-event maintenance action.
         duration_ms = round((time.perf_counter() - started) * 1000, 1)
         logger.info(
-            "scan_completed id=%s variant=%s duration_ms=%s focus=%s",
+            "scan_completed id=%s variant=%s duration_ms=%s quality=%s focus=%s",
             scan_id,
             variant.key,
             duration_ms,
+            quality["overallScore"],
             quality["focusScore"],
         )
         quality["processingMs"] = duration_ms
