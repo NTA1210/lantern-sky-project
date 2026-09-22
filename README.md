@@ -43,16 +43,15 @@ Những lần sau:
 - Control: `http://127.0.0.1:8000/control`
 - Display: `http://127.0.0.1:8000/display`
 
-Display hiện có **4 dây đèn dùng chung cho tất cả template**. Mỗi đèn mới được phân vào một dây theo pseudo-random ổn định từ `id`, không còn gắn Classic/Balloon/Round/Rectangle với một dây cố định. Cùng một đèn vẫn quay lại đúng dây sau reload/reconnect. Khoảng 10 vị trí đèn được nhìn thấy trên mỗi dây ở cùng thời điểm. **10 chỉ là mật độ hiển thị trong viewport, không phải giới hạn số đèn của dây hay giới hạn lưu trữ.** Các dây chạy ngang liên tục với hướng và tốc độ xen kẽ:
+Display hiện có **3 dây đèn dùng chung cho tất cả template**. Mỗi đèn mới được phân vào một dây theo pseudo-random ổn định từ `id`, không còn gắn Classic/Balloon/Round/Rectangle với một dây cố định. Cùng một đèn vẫn quay lại đúng dây sau reload/reconnect. Khoảng 10 vị trí đèn được nhìn thấy trên mỗi dây ở cùng thời điểm. **10 chỉ là mật độ hiển thị trong viewport, không phải giới hạn số đèn của dây hay giới hạn lưu trữ.** Các dây chạy ngang liên tục với hướng và tốc độ xen kẽ:
 
 | Dây | Hướng | Tốc độ |
 | --- | --- | --- |
 | 1 | phải → trái | 24 px/s |
 | 2 | trái → phải | 19 px/s |
 | 3 | phải → trái | 28 px/s |
-| 4 | trái → phải | 21 px/s |
 
-Mỗi scan mới được WebSocket push ngay lên Display, được phân vào một trong bốn dây độc lập với loại template, và **Tổng số đèn lồng** được cập nhật real-time. Display đồng bộ lại toàn bộ lịch sử sau reload/reconnect. Đèn chạy ra khỏi viewport chỉ là tạm thời không được nhìn thấy; record vẫn nằm trong lịch sử của dây và sẽ loop trở lại ở các vòng tiếp theo.
+Mỗi scan mới được WebSocket push ngay lên Display, được phân vào một trong ba dây độc lập với loại template, và **Tổng số đèn lồng** được cập nhật real-time. Display đồng bộ lại toàn bộ lịch sử sau reload/reconnect. Đèn chạy ra khỏi viewport chỉ là tạm thời không được nhìn thấy; record vẫn nằm trong lịch sử của dây và sẽ loop trở lại ở các vòng tiếp theo.
 
 ## 4 mẫu lồng đèn
 
@@ -221,7 +220,7 @@ Mở Control, ở phần **Display background**, bấm **Upload background** r�
 
 ## Browser E2E với Playwright
 
-E2E dùng Chromium thật để kiểm tra Control/Display, 4 dây lantern và WebSocket. Lần đầu cài:
+E2E dùng Chromium thật để kiểm tra Control/Display, 3 dây lantern và WebSocket. Lần đầu cài:
 
 ```bash
 npm ci

@@ -7,6 +7,7 @@ const RUNTIME = path.join(ROOT, 'runtime', 'e2e');
 const LANTERNS = path.join(RUNTIME, 'lanterns');
 const SAMPLE = path.join(ROOT, 'frontend', 'sample_lantern.png');
 const VARIANTS = ['classic', 'balloon', 'round', 'rectangle'];
+const DISPLAY_LANE_COUNT = 3;
 
 function seedLanterns() {
   fs.rmSync(RUNTIME, { recursive: true, force: true });
@@ -46,21 +47,32 @@ function hashText(text = '') {
   return (hash >>> 0) / 4294967295;
 }
 
-function laneIndexForId(id) {
-  return Math.min(VARIANTS.length - 1, Math.floor(hashText(id) * VARIANTS.length));
+function laneIndexForNextRecord(counts, id) {
+  const minCount = Math.min(...counts);
+  const candidateIndexes = counts
+    .map((count, index) => ({ count, index }))
+    .filter((entry) => entry.count === minCount)
+    .map((entry) => entry.index);
+  const choiceIndex = Math.min(
+    candidateIndexes.length - 1,
+    Math.floor(hashText(id) * candidateIndexes.length)
+  );
+  return candidateIndexes[choiceIndex];
 }
 
 function seedOneClassicPerRandomLane() {
   fs.rmSync(RUNTIME, { recursive: true, force: true });
   fs.mkdirSync(LANTERNS, { recursive: true });
   const selected = new Map();
+  const laneCounts = Array(DISPLAY_LANE_COUNT).fill(0);
 
-  for (let index = 0; index < 5000 && selected.size < 4; index += 1) {
+  for (let index = 0; index < 5000 && selected.size < DISPLAY_LANE_COUNT; index += 1) {
     const id = `random_lane_${String(index).padStart(4, '0')}`;
-    const laneIndex = laneIndexForId(id);
+    const laneIndex = laneIndexForNextRecord(laneCounts, id);
+    laneCounts[laneIndex] += 1;
     if (!selected.has(laneIndex)) selected.set(laneIndex, id);
   }
-  if (selected.size !== 4) throw new Error('Could not find one stable id per display lane');
+  if (selected.size !== DISPLAY_LANE_COUNT) throw new Error('Could not find one stable id per display lane');
 
   const baseTime = Date.UTC(2026, 8, 6, 12, 0, 0) / 1000;
   return [...selected.entries()]
@@ -177,7 +189,6 @@ test('same template lanterns are distributed across stable random lanes', async 
   positions.forEach((position) => expect(position).toBeTruthy());
   expect(positions[0].y).toBeLessThan(positions[1].y);
   expect(positions[1].y).toBeLessThan(positions[2].y);
-  expect(positions[2].y).toBeLessThan(positions[3].y);
 });
 
 test('visible slots do not cap persisted or looping lantern history', async ({ page, request }) => {

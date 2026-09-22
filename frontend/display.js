@@ -10,7 +10,6 @@ const LANE_CONFIG = [
   { key: 'classic', direction: -1, speed: 24 },
   { key: 'balloon', direction: 1, speed: 19 },
   { key: 'round', direction: -1, speed: 28 },
-  { key: 'rectangle', direction: 1, speed: 21 },
 ];
 // Visual density only: this is how many lantern positions should fit in the
 // viewport at once. It is never a retention limit for lane.records or storage.
@@ -217,15 +216,15 @@ function drawBackground(t) {
 }
 
 function laneGeometry(index) {
-  const top = H * 0.18;
-  const bottom = H * 0.82;
+  const top = H * 0.22;
+  const bottom = H * 0.68;
   const gap = (bottom - top) / (LANE_CONFIG.length - 1);
   return { y: top + gap * index, gap };
 }
 
 function ropeY(index, x, t) {
   const { y } = laneGeometry(index);
-  const sag = clamp(H * 0.038 + index * 3.5, 22, 52);
+  const sag = clamp(H * 0.032 + index * 3.5, 20, 46);
   const wave = Math.sin((x / Math.max(W, 1)) * Math.PI * 2 + index * 0.9 + t * 0.08) * 0.8;
   const normalized = (x / Math.max(W, 1)) * 2 - 1;
   return y + sag * (1 - normalized * normalized) + wave;
@@ -336,6 +335,58 @@ function drawLoadingLantern(x, anchorY, totalAngle, stringLength) {
   ctx.restore();
 }
 
+function drawLanternTassel(record, width, height, lanternTopY) {
+  const seed = hashText(record.id || record.url || '');
+  const warmRed = seed > 0.5;
+  const tasselColor = warmRed ? 'rgba(205, 48, 34, 0.96)' : 'rgba(232, 169, 35, 0.96)';
+  const tasselDark = warmRed ? 'rgba(105, 22, 18, 0.82)' : 'rgba(121, 75, 12, 0.82)';
+  const bottomY = lanternTopY + height;
+  const beadY = bottomY + clamp(height * 0.055, 5, 9);
+  const cordEndY = bottomY + clamp(height * 0.22, 18, 30);
+  const tasselEndY = bottomY + clamp(height * 0.43, 34, 52);
+  const spread = clamp(width * 0.055, 4, 8);
+
+  ctx.save();
+  ctx.shadowBlur = 0;
+  ctx.lineCap = 'round';
+
+  ctx.strokeStyle = 'rgba(70, 42, 22, 0.9)';
+  ctx.lineWidth = 1.25;
+  ctx.beginPath();
+  ctx.moveTo(0, bottomY - 1);
+  ctx.lineTo(0, cordEndY);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(28, 22, 18, 0.95)';
+  ctx.beginPath();
+  ctx.arc(0, beadY, clamp(width * 0.035, 3.2, 5.2), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255, 211, 120, 0.65)';
+  ctx.beginPath();
+  ctx.arc(-1.2, beadY - 1.2, clamp(width * 0.011, 1, 1.8), 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = tasselColor;
+  ctx.lineWidth = 2.1;
+  ctx.beginPath();
+  ctx.moveTo(0, beadY + 3);
+  ctx.lineTo(0, tasselEndY);
+  ctx.stroke();
+
+  ctx.strokeStyle = tasselDark;
+  ctx.lineWidth = 1.1;
+  for (let i = -2; i <= 2; i += 1) {
+    const startX = i * 0.8;
+    const endX = i * spread * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(startX, cordEndY);
+    ctx.lineTo(endX, tasselEndY - Math.abs(i) * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function drawLantern(record, x, index, t, pitch, lane) {
   let alpha = 1.0;
   if (record.fadingOut) {
@@ -415,6 +466,7 @@ function drawLantern(record, x, index, t, pitch, lane) {
   ctx.shadowColor = `rgba(255,147,50,${(0.52 + newGlow * 0.35) * alpha})`;
   ctx.shadowBlur = (18 + newGlow * 24) * alpha;
   ctx.drawImage(image, -width / 2, stringLength, width, height);
+  drawLanternTassel(record, width, height, stringLength);
 
   ctx.restore();
 }
