@@ -158,11 +158,29 @@ def main() -> None:
             # 8. Delete removes DB row, PNG, and WebP thumbnail
             st, _, _ = _request(opener, f"{base}/api/lanterns/{scan_data['id']}", method="DELETE")
             assert st == 200
-            assert not (tmp_path / "lanterns").glob("*.png").__iter__().__next__() if list((tmp_path / "lanterns").glob("*.png")) else True
             assert len(list((tmp_path / "lanterns").glob("*.png"))) == 0
             assert len(list((tmp_path / "thumbs").glob("*.webp"))) == 0
 
-            print("VPS STACK (DB + THUMBS + UPLOAD SCAN + HEADERS) TESTS PASSED")
+            # 9. UI change-password works even when initial password was seeded from .env
+            st, _, _ = _request(
+                opener,
+                f"{base}/api/auth/change-password",
+                method="POST",
+                body=json.dumps({"current_password": "vps_strong_pass_123", "new_password": "new_ui_password_999"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            assert st == 200
+            _request(opener, f"{base}/api/auth/logout", method="POST")
+            st, _, _ = _request(
+                opener,
+                f"{base}/api/auth/login",
+                method="POST",
+                body=json.dumps({"username": "vps_admin", "password": "new_ui_password_999"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            assert st == 200
+
+            print("VPS STACK (DB + THUMBS + UPLOAD SCAN + HEADERS + UI PASSWORD CHANGE) TESTS PASSED")
         finally:
             proc.terminate()
             try:

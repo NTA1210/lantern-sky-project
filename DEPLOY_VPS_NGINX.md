@@ -23,7 +23,7 @@ cp .env.example .env
 nano .env
 ```
 
-Đặt tối thiểu các biến sau trong `.env`:
+Đặt tối thiểu các biến sau trong `.env` (mật khẩu này dùng làm **mật khẩu khởi tạo ban đầu**; sau khi đăng nhập vào `/control`, bạn có thể bấm nút **🔑 Đổi mật khẩu** trực tiếp trên web mà không cần sửa `.env` hay khởi động lại server):
 
 ```env
 LANTERN_CONTROL_USER=admin

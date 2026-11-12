@@ -82,7 +82,14 @@ def _write_private_file(path: Path, content: str) -> None:
 
 
 def is_env_managed() -> bool:
-    return bool(config.CONTROL_PASSWORD or config.CONTROL_PASSWORD_HASH)
+    return False
+
+
+def _env_fingerprint() -> str | None:
+    if not (config.CONTROL_PASSWORD or config.CONTROL_PASSWORD_HASH):
+        return None
+    raw = f"{config.CONTROL_USER}:{config.CONTROL_PASSWORD}:{config.CONTROL_PASSWORD_HASH}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 def _load_stored_credentials() -> dict | None:
@@ -98,18 +105,11 @@ def _load_stored_credentials() -> dict | None:
 
 
 def _active_credentials() -> tuple[str, str, str]:
-    """Return (username, mode, material) where mode is 'hash' or 'plain'."""
-    if config.CONTROL_PASSWORD_HASH:
-        return config.CONTROL_USER, "hash", config.CONTROL_PASSWORD_HASH
-    if config.CONTROL_PASSWORD:
-        return config.CONTROL_USER, "plain", config.CONTROL_PASSWORD
-
+    """Return (username, mode, material) backed by control_auth.json."""
     stored = _load_stored_credentials()
-    if stored is not None:
-        return str(stored["username"]), "hash", str(stored["password_hash"])
-
-    ensure_credentials_initialized()
-    stored = _load_stored_credentials()
+    if stored is None:
+        ensure_credentials_initialized()
+        stored = _load_stored_credentials()
     if stored is None:
         raise RuntimeError("Control auth credentials could not be initialized")
     return str(stored["username"]), "hash", str(stored["password_hash"])
@@ -122,10 +122,26 @@ def _credential_version() -> str:
 
 
 def ensure_credentials_initialized() -> None:
-    """Create initial random password hash on disk when no env credentials are configured."""
-    if config.AUTH_DISABLED or is_env_managed():
+    """Seed control_auth.json from env on first boot (or when env credentials change), or generate random password."""
+    if config.AUTH_DISABLED:
         return
-    if _load_stored_credentials() is not None:
+
+    stored = _load_stored_credentials()
+    env_fp = _env_fingerprint()
+
+    if env_fp is not None:
+        if stored is not None and stored.get("env_fingerprint") == env_fp:
+            return
+        password_hash = config.CONTROL_PASSWORD_HASH or hash_password(config.CONTROL_PASSWORD)
+        payload = {
+            "username": config.CONTROL_USER,
+            "password_hash": password_hash,
+            "env_fingerprint": env_fp,
+        }
+        _write_private_file(config.AUTH_FILE, json.dumps(payload, indent=2))
+        return
+
+    if stored is not None:
         return
 
     initial_password = secrets.token_urlsafe(12)
@@ -139,8 +155,8 @@ def ensure_credentials_initialized() -> None:
         "[Lantern Sky Security] Da tao tai khoan Control mac dinh:\n"
         f"  Username: {config.CONTROL_USER}\n"
         f"  Password: {initial_password}\n"
-        "Hay luu lai mat khau nay hoac dat bien moi truong\n"
-        "LANTERN_CONTROL_USER / LANTERN_CONTROL_PASSWORD truoc khi public.\n"
+        "Ban co the dang nhap va doi mat khau ngay trong giao dien Control\n"
+        "(nut Doi mat khau) ma khong can sua file .env.\n"
         "=================================================================="
     )
     logger.warning(banner)
@@ -174,12 +190,6 @@ def verify_credentials(username: str, password: str) -> bool:
 
 
 def change_stored_password(current_password: str, new_password: str) -> str:
-    if is_env_managed():
-        raise HTTPException(
-            409,
-            detail="Tài khoản đang được cấu hình qua biến môi trường (LANTERN_CONTROL_PASSWORD). Hãy cập nhật biến môi trường để đổi mật khẩu.",
-        )
-
     username, _, _ = _active_credentials()
     if not verify_credentials(username, current_password):
         raise HTTPException(400, detail="Mật khẩu hiện tại không đúng.")
@@ -187,10 +197,13 @@ def change_stored_password(current_password: str, new_password: str) -> str:
     if len(new_password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(400, detail=f"Mật khẩu mới phải có ít nhất {MIN_PASSWORD_LENGTH} ký tự.")
 
-    payload = {
+    payload: dict[str, str] = {
         "username": username,
         "password_hash": hash_password(new_password),
     }
+    env_fp = _env_fingerprint()
+    if env_fp is not None:
+        payload["env_fingerprint"] = env_fp
     _write_private_file(config.AUTH_FILE, json.dumps(payload, indent=2))
     return username
 
