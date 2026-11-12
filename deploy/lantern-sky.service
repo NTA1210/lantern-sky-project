@@ -1,0 +1,25 @@
+# Systemd service cho Lantern Sky tren Ubuntu VPS
+# Luu vao: /etc/systemd/system/lantern-sky.service
+# Thay /opt/lantern_sky_project va User=www-data (hoac user chay app cua ban) cho phu hop.
+
+[Unit]
+Description=Lantern Sky FastAPI Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/lantern_sky_project
+EnvironmentFile=/opt/lantern_sky_project/.env
+Environment=LANTERN_NO_BROWSER=1
+Environment=LANTERN_RELOAD=0
+Environment=LANTERN_DISABLE_CAMERA=1
+ExecStart=/opt/lantern_sky_project/.venv/bin/uvicorn backend.app:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+

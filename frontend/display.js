@@ -16,7 +16,7 @@ const LANE_CONFIG = [
 const VISIBLE_SLOT_COUNT = 10;
 // Bitmap decoding is bounded for memory, but metadata/history stays complete
 // and an evicted bitmap is simply loaded again when that lantern loops back.
-const MAX_IMAGE_CACHE = 72;
+const MAX_IMAGE_CACHE = 300;
 
 let W = innerWidth;
 let H = innerHeight;
@@ -648,16 +648,40 @@ function removeRecord(id) {
   });
 }
 
+let reconnectAttempt = 0;
+let hasCompletedInitialSync = false;
+
 function connect() {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
+  let pingTimer = null;
+
   ws.onopen = async () => {
+    const isReconnect = reconnectAttempt > 0 || hasCompletedInitialSync;
+    reconnectAttempt = 0;
     statusEl.textContent = 'Live';
-    await syncState();
-    ws.send('display-ready');
+    if (isReconnect) {
+      // Spread out state re-sync slightly when hundreds of viewers reconnect together
+      const jitterMs = Math.floor(Math.random() * 450);
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) syncState();
+      }, jitterMs);
+    } else {
+      hasCompletedInitialSync = true;
+      await syncState();
+    }
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send('display-ready');
+      pingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send('ping');
+        }
+      }, 25000);
+    }
   };
   ws.onmessage = (event) => {
     try {
       const payload = JSON.parse(event.data);
+      if (payload.type === 'pong') return;
       if (payload.type === 'settings_updated' && payload.settings) {
         Object.assign(settings, payload.settings);
       }
@@ -703,8 +727,15 @@ function connect() {
     }
   };
   ws.onclose = () => {
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
+    }
     statusEl.textContent = 'Reconnecting...';
-    setTimeout(connect, 1000);
+    const baseDelay = Math.min(15000, 1000 * (2 ** Math.min(reconnectAttempt, 4)));
+    const jitter = Math.floor(Math.random() * 1200);
+    reconnectAttempt += 1;
+    setTimeout(connect, baseDelay + jitter);
   };
   ws.onerror = () => ws.close();
 }
@@ -721,6 +752,5 @@ addEventListener('keydown', (event) => {
 addEventListener('resize', resize);
 
 resize();
-syncState();
 connect();
 requestAnimationFrame(frame);

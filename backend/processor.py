@@ -12,7 +12,7 @@ import numpy as np
 
 from . import config
 from .layout import LanternVariant, create_lantern_mask, expected_marker_corners, identify_variant, lantern_roi
-from .storage import atomic_imwrite, lantern_filename
+from .storage import atomic_imwrite, lantern_filename, record_new_lantern
 
 logger = logging.getLogger("lantern.processor")
 
@@ -30,6 +30,7 @@ class ProcessResult:
     variant_key: str
     variant_label: str
     quality: dict
+    display_url: str | None = None
     original_path: Path | None = None
     corrected_path: Path | None = None
 
@@ -231,6 +232,12 @@ class LanternProcessor:
         scan_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
         lantern_path = config.LANTERNS_DIR / lantern_filename(scan_id, variant.key)
         atomic_imwrite(lantern_path, lantern, [cv2.IMWRITE_PNG_COMPRESSION, config.PNG_COMPRESSION])
+        stored_record = record_new_lantern(
+            scan_id=scan_id,
+            variant_key=variant.key,
+            lantern_path=lantern_path,
+            quality_score=quality["overallScore"],
+        )
 
         original_path = None
         corrected_path = None
@@ -261,6 +268,7 @@ class LanternProcessor:
             variant_key=variant.key,
             variant_label=variant.label,
             quality=quality,
+            display_url=stored_record.get("url"),
             original_path=original_path,
             corrected_path=corrected_path,
         )

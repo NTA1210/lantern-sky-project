@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trung Tâm Điều Khiển — Phố Đèn Ký Ức</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="alternate icon" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=13">
+  <link rel="stylesheet" href="/static/styles.css?v=15">
 </head>
 <body class="control-page">
   <div class="ambient-glow ambient-1"></div>
@@ -28,11 +29,17 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <button id="openGuideBtn" class="button nav-btn" title="Hướng dẫn kết nối máy ảnh/camera">
+        <button id="openGuideBtn" type="button" class="button nav-btn" title="Hướng dẫn kết nối máy ảnh/camera">
           <span class="btn-icon">ℹ️</span> Hướng dẫn thiết bị
         </button>
-        <button id="openSettingsBtn" class="button nav-btn" title="Cài đặt thông số hiệu ứng & thời gian scan">
+        <button id="openSettingsBtn" type="button" class="button nav-btn" title="Cài đặt thông số hiệu ứng & thời gian scan">
           <span class="btn-icon">⚙️</span> Cài đặt thông số
+        </button>
+        <button id="openChangePasswordBtn" type="button" class="button nav-btn" title="Đổi mật khẩu đăng nhập Control">
+          <span class="btn-icon">🔑</span> Đổi mật khẩu
+        </button>
+        <button id="logoutBtn" type="button" class="button nav-btn nav-btn-logout" title="Đăng xuất khỏi trang Control">
+          <span class="btn-icon">🚪</span> Đăng xuất
         </button>
         <a class="button primary glow-btn" href="/display" target="_blank">
           <span>Màn Hình Chiếu</span>
@@ -60,7 +67,8 @@
                   <option value="0">Đang quét thiết bị...</option>
                 </select>
               </div>
-              <button id="refreshCamerasBtn" class="button-icon" title="Quét lại thiết bị camera">🔄</button>
+              <button id="refreshCamerasBtn" type="button" class="button-icon" title="Quét lại thiết bị camera">🔄</button>
+              <button id="browserCamToggleBtn" type="button" class="button-icon" title="Dùng camera trình duyệt trên máy của bạn (khi chạy trên VPS)">🌐</button>
               <span id="readyBadge" class="badge">Checking</span>
             </div>
           </div>
@@ -68,6 +76,7 @@
           <!-- KHUNG STREAM CAMERA -->
           <div id="cameraWrap" class="camera-wrap is-loading">
             <img id="cameraStream" src="/api/camera/stream" alt="Camera preview">
+            <video id="browserVideo" class="browser-video hidden" autoplay playsinline muted></video>
             <div class="scan-laser-line"></div>
             <div id="cameraEmpty" class="camera-empty">
               <div class="empty-spinner"></div>
@@ -104,10 +113,14 @@
 
           <!-- ACTION BUTTONS -->
           <div class="actions">
-            <button id="scanButton" class="button primary scan-action-btn" disabled>
+            <button id="scanButton" type="button" class="button primary scan-action-btn" disabled>
               <span class="btn-icon">⚡</span> Scan Lồng Đèn
             </button>
-            <button id="demoButton" class="button secondary demo-action-btn">
+            <label class="button secondary upload-button upload-scan-btn" title="Chụp hoặc tải ảnh giấy vẽ để quét ngay">
+              <input id="scanUploadInput" type="file" accept="image/*" capture="environment">
+              <span>📷 Quét từ ảnh</span>
+            </label>
+            <button id="demoButton" type="button" class="button secondary demo-action-btn">
               <span class="btn-icon">✨</span> Thả Đèn Demo
             </button>
           </div>
@@ -211,115 +224,115 @@
   </main>
 
   <!-- POPUP 1: MODAL CÀI ĐẶT THÔNG SỐ HIỆU ỨNG (SETTINGS MODAL) -->
-  <div id="settingsModal" class="modal-overlay hidden">
-    <div class="modal-card modal-card-large">
-      <div class="modal-header-row">
-        <div class="modal-title-with-icon">
-          <span class="modal-icon-badge">⚙️</span>
-          <div>
-            <h3>Cài Đặt Hiệu Ứng & Quét</h3>
-            <p class="muted small" style="margin: 2px 0 0;">Điều chỉnh thông số chuyển động trên màn hình chiếu và độ nhạy scan.</p>
-          </div>
+  <dialog id="settingsModal" class="modal-dialog modal-dialog-large" aria-labelledby="settingsModalTitle" closedby="any">
+    <div class="modal-header-row">
+      <div class="modal-title-with-icon">
+        <span class="modal-icon-badge" aria-hidden="true">⚙️</span>
+        <div>
+          <h3 id="settingsModalTitle">Cài Đặt Hiệu Ứng &amp; Quét</h3>
+          <p class="muted small modal-subtitle">Điều chỉnh thông số chuyển động trên màn hình chiếu và độ nhạy scan.</p>
         </div>
-        <button id="settingsModalCloseBtn" class="modal-close-icon" title="Đóng">✕</button>
       </div>
+      <button id="settingsModalCloseBtn" type="button" class="modal-close-icon" aria-label="Đóng" title="Đóng">✕</button>
+    </div>
 
+    <div class="modal-body-scroll">
       <div class="modal-settings-list">
         <!-- Thông số 1: Tốc độ chạy dây -->
         <div class="modal-setting-row">
           <div class="modal-setting-info">
             <div class="setting-title-line">
-              <strong>Tốc độ chạy dây</strong>
+              <label for="conveyorSpeedInput"><strong>Tốc độ chạy dây</strong></label>
               <span class="tag-badge">Conveyor Speed</span>
             </div>
             <span class="muted small">Tốc độ lồng đèn di chuyển qua lại trên dây cáp</span>
           </div>
           <div class="stepper-wrap">
-            <button type="button" class="step-btn" data-target="conveyorSpeedInput" data-step="-0.1">－</button>
+            <button type="button" class="step-btn" data-target="conveyorSpeedInput" data-step="-0.1" aria-label="Giảm tốc độ chạy dây">－</button>
             <input id="conveyorSpeedInput" type="number" min="0.2" max="3.0" step="0.1" value="1.0" class="num-input">
             <span class="input-unit">x</span>
-            <button type="button" class="step-btn" data-target="conveyorSpeedInput" data-step="0.1">＋</button>
+            <button type="button" class="step-btn" data-target="conveyorSpeedInput" data-step="0.1" aria-label="Tăng tốc độ chạy dây">＋</button>
           </div>
-          <input id="conveyorSpeedSlider" type="range" min="0.2" max="3.0" step="0.1" value="1.0" class="slider-control modal-slider">
+          <input id="conveyorSpeedSlider" type="range" min="0.2" max="3.0" step="0.1" value="1.0" class="slider-control modal-slider" aria-label="Thanh trượt tốc độ chạy dây">
         </div>
 
         <!-- Thông số 2: Độ rung lắc lồng đèn -->
         <div class="modal-setting-row">
           <div class="modal-setting-info">
             <div class="setting-title-line">
-              <strong>Độ rung lắc lồng đèn</strong>
+              <label for="swayAmpInput"><strong>Độ rung lắc lồng đèn</strong></label>
               <span class="tag-badge">Sway Amplitude</span>
             </div>
             <span class="muted small">Biên độ đung đưa theo gió tự nhiên của lồng đèn</span>
           </div>
           <div class="stepper-wrap">
-            <button type="button" class="step-btn" data-target="swayAmpInput" data-step="-0.1">－</button>
+            <button type="button" class="step-btn" data-target="swayAmpInput" data-step="-0.1" aria-label="Giảm độ rung lắc">－</button>
             <input id="swayAmpInput" type="number" min="0.0" max="3.0" step="0.1" value="1.0" class="num-input">
             <span class="input-unit">x</span>
-            <button type="button" class="step-btn" data-target="swayAmpInput" data-step="0.1">＋</button>
+            <button type="button" class="step-btn" data-target="swayAmpInput" data-step="0.1" aria-label="Tăng độ rung lắc">＋</button>
           </div>
-          <input id="swayAmpSlider" type="range" min="0.0" max="3.0" step="0.1" value="1.0" class="slider-control modal-slider">
+          <input id="swayAmpSlider" type="range" min="0.0" max="3.0" step="0.1" value="1.0" class="slider-control modal-slider" aria-label="Thanh trượt độ rung lắc">
         </div>
 
         <!-- Thông số 3: Tốc độ đung đưa theo gió -->
         <div class="modal-setting-row">
           <div class="modal-setting-info">
             <div class="setting-title-line">
-              <strong>Tốc độ đung đưa gió</strong>
+              <label for="swaySpeedInput"><strong>Tốc độ đung đưa gió</strong></label>
               <span class="tag-badge">Sway Frequency</span>
             </div>
             <span class="muted small">Nhịp dao động nhanh hay êm đềm của con lắc</span>
           </div>
           <div class="stepper-wrap">
-            <button type="button" class="step-btn" data-target="swaySpeedInput" data-step="-0.1">－</button>
+            <button type="button" class="step-btn" data-target="swaySpeedInput" data-step="-0.1" aria-label="Giảm tốc độ đung đưa gió">－</button>
             <input id="swaySpeedInput" type="number" min="0.2" max="2.5" step="0.1" value="1.0" class="num-input">
             <span class="input-unit">x</span>
-            <button type="button" class="step-btn" data-target="swaySpeedInput" data-step="0.1">＋</button>
+            <button type="button" class="step-btn" data-target="swaySpeedInput" data-step="0.1" aria-label="Tăng tốc độ đung đưa gió">＋</button>
           </div>
-          <input id="swaySpeedSlider" type="range" min="0.2" max="2.5" step="0.1" value="1.0" class="slider-control modal-slider">
+          <input id="swaySpeedSlider" type="range" min="0.2" max="2.5" step="0.1" value="1.0" class="slider-control modal-slider" aria-label="Thanh trượt tốc độ đung đưa gió">
         </div>
 
         <!-- Thông số 4: Thời gian tự động Scan -->
         <div class="modal-setting-row">
           <div class="modal-setting-info">
             <div class="setting-title-line">
-              <strong>Thời gian giữ tự động Scan</strong>
+              <label for="autoScanTimeInput"><strong>Thời gian giữ tự động Scan</strong></label>
               <span class="tag-badge">Hold Time</span>
             </div>
             <span class="muted small">Thời gian giữ đủ 4 marker trước khi tự động chụp</span>
           </div>
           <div class="stepper-wrap">
-            <button type="button" class="step-btn" data-target="autoScanTimeInput" data-step="-0.5">－</button>
+            <button type="button" class="step-btn" data-target="autoScanTimeInput" data-step="-0.5" aria-label="Giảm thời gian giữ scan">－</button>
             <input id="autoScanTimeInput" type="number" min="0.5" max="5.0" step="0.5" value="2.0" class="num-input">
             <span class="input-unit">s</span>
-            <button type="button" class="step-btn" data-target="autoScanTimeInput" data-step="0.5">＋</button>
+            <button type="button" class="step-btn" data-target="autoScanTimeInput" data-step="0.5" aria-label="Tăng thời gian giữ scan">＋</button>
           </div>
-          <input id="autoScanTimeSlider" type="range" min="0.5" max="5.0" step="0.5" value="2.0" class="slider-control modal-slider">
+          <input id="autoScanTimeSlider" type="range" min="0.5" max="5.0" step="0.5" value="2.0" class="slider-control modal-slider" aria-label="Thanh trượt thời gian giữ tự động scan">
         </div>
 
         <!-- Thông số 5: Chỉ số chấp nhận quét (Scan Acceptance) -->
         <div class="modal-setting-row">
           <div class="modal-setting-info">
             <div class="setting-title-line">
-              <strong>Chỉ số chấp nhận quét</strong>
+              <label for="scanQualityInput"><strong>Chỉ số chấp nhận quét</strong></label>
               <span class="tag-badge">Scan Acceptance</span>
             </div>
             <span class="muted small">Ngưỡng điểm chất lượng tối thiểu (độ nét, góc phẳng, ánh sáng) để chụp</span>
           </div>
           <div class="stepper-wrap">
-            <button type="button" class="step-btn" data-target="scanQualityInput" data-step="-5">－</button>
+            <button type="button" class="step-btn" data-target="scanQualityInput" data-step="-5" aria-label="Giảm chỉ số chấp nhận quét">－</button>
             <input id="scanQualityInput" type="number" min="40" max="95" step="5" value="65" class="num-input">
             <span class="input-unit">%</span>
-            <button type="button" class="step-btn" data-target="scanQualityInput" data-step="5">＋</button>
+            <button type="button" class="step-btn" data-target="scanQualityInput" data-step="5" aria-label="Tăng chỉ số chấp nhận quét">＋</button>
           </div>
-          <input id="scanQualitySlider" type="range" min="40" max="95" step="5" value="65" class="slider-control modal-slider">
+          <input id="scanQualitySlider" type="range" min="40" max="95" step="5" value="65" class="slider-control modal-slider" aria-label="Thanh trượt chỉ số chấp nhận quét">
         </div>
 
         <!-- Thông số 6: Lật gương Camera (Mirror Mode) -->
         <div class="modal-setting-row">
           <div class="modal-setting-info">
             <div class="setting-title-line">
-              <strong>Lật gương Camera (Mirror Mode)</strong>
+              <label for="cameraFlipToggle"><strong>Lật gương Camera (Mirror Mode)</strong></label>
               <span class="tag-badge">Flip Horizontal</span>
             </div>
             <span class="muted small">Lật ngược hình ảnh camera theo chiều ngang giống như soi gương</span>
@@ -330,105 +343,103 @@
           </label>
         </div>
       </div>
+    </div>
 
-      <div class="modal-actions modal-actions-space">
-        <button id="resetSettingsBtn" class="button secondary">Khôi phục mặc định</button>
-        <div class="modal-actions-right">
-          <button id="cancelSettingsBtn" class="button secondary">Hủy bỏ</button>
-          <button id="saveSettingsBtn" class="button primary glow-btn">💾 Lưu & Áp dụng</button>
-        </div>
+    <div class="modal-actions modal-actions-space">
+      <button id="resetSettingsBtn" type="button" class="button secondary">Khôi phục mặc định</button>
+      <div class="modal-actions-right">
+        <button id="cancelSettingsBtn" type="button" class="button secondary">Hủy bỏ</button>
+        <button id="saveSettingsBtn" type="button" class="button primary glow-btn">💾 Lưu &amp; Áp dụng</button>
       </div>
     </div>
-  </div>
+  </dialog>
 
   <!-- POPUP 2: MODAL HƯỚNG DẪN KẾT NỐI THIẾT BỊ (DEVICE GUIDE MODAL) -->
-  <div id="guideModal" class="modal-overlay hidden">
-    <div class="modal-card modal-card-large">
-      <div class="modal-header-row">
-        <div class="modal-title-with-icon">
-          <span class="modal-icon-badge">ℹ️</span>
-          <div>
-            <h3>Cẩm Nang Kết Nối Thiết Bị Camera</h3>
-            <p class="muted small" style="margin: 2px 0 0;">Hướng dẫn thiết lập các nguồn máy ảnh/webcam tại sự kiện.</p>
-          </div>
-        </div>
-        <button id="guideModalCloseBtn" class="modal-close-icon" title="Đóng">✕</button>
-      </div>
-
-      <div class="guide-modal-body">
-        <div class="guide-cards">
-          <div class="guide-card">
-            <div class="guide-header">
-              <span class="guide-icon">📷</span>
-              <strong>Máy ảnh Sony (Alpha A7, ZV Series, FX3/30...)</strong>
-            </div>
-            <ol class="guide-steps">
-              <li>Cài đặt ứng dụng <strong>Sony Imaging Edge Webcam</strong> trên laptop nếu chưa có.</li>
-              <li>Trên máy ảnh: Vào <strong>Menu</strong> &rarr; <strong>Network / USB</strong> &rarr; <strong>USB Connection</strong> chuyển sang <strong>PC Remote</strong> (hoặc chọn <strong>USB Streaming</strong> trên ZV-E10/A7IV).</li>
-              <li>Dùng cáp <strong>Type-C hỗ trợ truyền dữ liệu</strong> cắm giữa máy ảnh và laptop.</li>
-              <li>Bấm nút <strong>🔄</strong> trên trang Control và chọn <strong>Sony Camera</strong> trong danh sách.</li>
-            </ol>
-          </div>
-
-          <div class="guide-card">
-            <div class="guide-header">
-              <span class="guide-icon">🎥</span>
-              <strong>Webcam USB ngoài & HDMI Capture Card</strong>
-            </div>
-            <ol class="guide-steps">
-              <li>Cắm dây USB webcam hoặc thiết bị HDMI Capture Card vào cổng USB 3.0 của máy tính.</li>
-              <li>Bấm nút <strong>🔄</strong> trên giao diện để hệ thống quét và nhận diện tên thiết bị.</li>
-              <li>Chọn đúng tên webcam hoặc <strong>USB Video Device</strong> trong menu chọn camera.</li>
-            </ol>
-          </div>
-
-          <div class="guide-card">
-            <div class="guide-header">
-              <span class="guide-icon">🖥️</span>
-              <strong>OBS Virtual Camera (Luồng ảo từ OBS)</strong>
-            </div>
-            <ol class="guide-steps">
-              <li>Khởi động phần mềm OBS Studio trên máy tính.</li>
-              <li>Bấm <strong>Start Virtual Camera</strong> ở góc dưới bên phải giao diện OBS.</li>
-              <li>Bấm nút <strong>🔄</strong> trên trang Control và chọn <strong>OBS Virtual Camera</strong>.</li>
-            </ol>
-          </div>
+  <dialog id="guideModal" class="modal-dialog modal-dialog-large" aria-labelledby="guideModalTitle" closedby="any">
+    <div class="modal-header-row">
+      <div class="modal-title-with-icon">
+        <span class="modal-icon-badge" aria-hidden="true">ℹ️</span>
+        <div>
+          <h3 id="guideModalTitle">Cẩm Nang Kết Nối Thiết Bị Camera</h3>
+          <p class="muted small modal-subtitle">Hướng dẫn thiết lập các nguồn máy ảnh/webcam tại sự kiện.</p>
         </div>
       </div>
+      <button id="guideModalCloseBtn" type="button" class="modal-close-icon" aria-label="Đóng" title="Đóng">✕</button>
+    </div>
 
-      <div class="modal-actions" style="border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 16px;">
-        <button id="guideModalDoneBtn" class="button primary" style="width: 100%;">Đã Hiểu</button>
+    <div class="modal-body-scroll">
+      <div class="guide-cards">
+        <div class="guide-card">
+          <div class="guide-header">
+            <span class="guide-icon">📷</span>
+            <strong>Máy ảnh Sony (Alpha A7, ZV Series, FX3/30...)</strong>
+          </div>
+          <ol class="guide-steps">
+            <li>Cài đặt ứng dụng <strong>Sony Imaging Edge Webcam</strong> trên laptop nếu chưa có.</li>
+            <li>Trên máy ảnh: Vào <strong>Menu</strong> &rarr; <strong>Network / USB</strong> &rarr; <strong>USB Connection</strong> chuyển sang <strong>PC Remote</strong> (hoặc chọn <strong>USB Streaming</strong> trên ZV-E10/A7IV).</li>
+            <li>Dùng cáp <strong>Type-C hỗ trợ truyền dữ liệu</strong> cắm giữa máy ảnh và laptop.</li>
+            <li>Bấm nút <strong>🔄</strong> trên trang Control và chọn <strong>Sony Camera</strong> trong danh sách.</li>
+          </ol>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-header">
+            <span class="guide-icon">🎥</span>
+            <strong>Webcam USB ngoài &amp; HDMI Capture Card</strong>
+          </div>
+          <ol class="guide-steps">
+            <li>Cắm dây USB webcam hoặc thiết bị HDMI Capture Card vào cổng USB 3.0 của máy tính.</li>
+            <li>Bấm nút <strong>🔄</strong> trên giao diện để hệ thống quét và nhận diện tên thiết bị.</li>
+            <li>Chọn đúng tên webcam hoặc <strong>USB Video Device</strong> trong menu chọn camera.</li>
+          </ol>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-header">
+            <span class="guide-icon">🖥️</span>
+            <strong>OBS Virtual Camera (Luồng ảo từ OBS)</strong>
+          </div>
+          <ol class="guide-steps">
+            <li>Khởi động phần mềm OBS Studio trên máy tính.</li>
+            <li>Bấm <strong>Start Virtual Camera</strong> ở góc dưới bên phải giao diện OBS.</li>
+            <li>Bấm nút <strong>🔄</strong> trên trang Control và chọn <strong>OBS Virtual Camera</strong>.</li>
+          </ol>
+        </div>
       </div>
     </div>
-  </div>
+
+    <div class="modal-actions">
+      <button id="guideModalDoneBtn" type="button" class="button primary full-w-btn">Đã Hiểu</button>
+    </div>
+  </dialog>
 
   <!-- POPUP 3: MODAL XÁC NHẬN (CONFIRM MODAL) -->
-  <div id="confirmModal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <div class="confirm-icon">⚠️</div>
+  <dialog id="confirmModal" class="modal-dialog modal-dialog-compact" aria-labelledby="modalTitle" closedby="any">
+    <div class="modal-body-scroll modal-confirm-body">
+      <div class="confirm-icon" aria-hidden="true">⚠️</div>
       <h3 id="modalTitle">Xác nhận</h3>
       <p id="modalMessage">Bạn có chắc chắn muốn thực hiện hành động này?</p>
-      <div class="modal-actions">
-        <button id="modalCancelBtn" class="button secondary">Hủy bỏ</button>
-        <button id="modalConfirmBtn" class="button danger">Xác nhận</button>
-      </div>
     </div>
-  </div>
+    <div class="modal-actions">
+      <button id="modalCancelBtn" type="button" class="button secondary" autofocus>Hủy bỏ</button>
+      <button id="modalConfirmBtn" type="button" class="button danger">Xác nhận</button>
+    </div>
+  </dialog>
 
   <!-- POPUP 4: MODAL XEM TRƯỚC VÀ XÁC NHẬN BACKGROUND (BACKGROUND PREVIEW MODAL) -->
-  <div id="bgPreviewModal" class="modal-overlay hidden">
-    <div class="modal-card modal-card-large">
-      <div class="modal-header-row">
-        <div class="modal-title-with-icon">
-          <span class="modal-icon-badge">🖼️</span>
-          <div>
-            <h3>Xem Trước Background Màn Chiếu</h3>
-            <p class="muted small" style="margin: 2px 0 0;">Kiểm tra bố cục và tỉ lệ 16:9 trước khi áp dụng lên màn hình chiếu thật.</p>
-          </div>
+  <dialog id="bgPreviewModal" class="modal-dialog modal-dialog-large" aria-labelledby="bgPreviewModalTitle" closedby="any">
+    <div class="modal-header-row">
+      <div class="modal-title-with-icon">
+        <span class="modal-icon-badge" aria-hidden="true">🖼️</span>
+        <div>
+          <h3 id="bgPreviewModalTitle">Xem Trước Background Màn Chiếu</h3>
+          <p class="muted small modal-subtitle">Kiểm tra bố cục và tỉ lệ 16:9 trước khi áp dụng lên màn hình chiếu thật.</p>
         </div>
-        <button id="bgPreviewModalCloseBtn" class="modal-close-icon" title="Đóng">✕</button>
       </div>
+      <button id="bgPreviewModalCloseBtn" type="button" class="modal-close-icon" aria-label="Đóng" title="Đóng">✕</button>
+    </div>
 
+    <div class="modal-body-scroll">
       <div class="bg-modal-preview-wrap">
         <div class="stage-preview-wrap" style="height: 230px; border-radius: 16px;">
           <img id="bgModalPreviewImg" class="stage-preview-img" src="" alt="Pending background" style="display: block;">
@@ -445,14 +456,64 @@
           <div class="bg-detail-tag highlight-tag">Tỉ lệ chuẩn: 16:9</div>
         </div>
       </div>
-
-      <div class="modal-actions modal-actions-space" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
-        <button id="bgModalCancelBtn" class="button secondary">✕ Hủy bỏ</button>
-        <button id="bgModalApplyBtn" class="button primary glow-btn">✅ Áp Dụng Lên Màn Chiếu</button>
-      </div>
     </div>
-  </div>
 
-  <script src="/static/control.js?v=13"></script>
+    <div class="modal-actions modal-actions-space">
+      <button id="bgModalCancelBtn" type="button" class="button secondary">✕ Hủy bỏ</button>
+      <button id="bgModalApplyBtn" type="button" class="button primary glow-btn">✅ Áp Dụng Lên Màn Chiếu</button>
+    </div>
+  </dialog>
+
+  <!-- POPUP 5: MODAL ĐỔI MẬT KHẨU CONTROL (CHANGE PASSWORD MODAL) -->
+  <dialog id="changePasswordModal" class="modal-dialog" aria-labelledby="changePasswordTitle" closedby="any">
+    <div class="modal-header-row">
+      <div class="modal-title-with-icon">
+        <span class="modal-icon-badge" aria-hidden="true">🔑</span>
+        <div>
+          <h3 id="changePasswordTitle">Đổi Mật Khẩu Control</h3>
+          <p class="muted small modal-subtitle">Bảo mật trang điều khiển khi vận hành qua Internet.</p>
+        </div>
+      </div>
+      <button id="changePasswordCloseBtn" type="button" class="modal-close-icon" aria-label="Đóng" title="Đóng">✕</button>
+    </div>
+
+    <form id="changePasswordForm" class="modal-form-shell">
+      <div class="modal-body-scroll">
+        <div id="changePasswordNotice" class="login-alert hidden" role="alert" aria-live="polite"></div>
+
+        <div class="form-field">
+          <label for="currentPasswordInput" class="form-label">Mật khẩu hiện tại <span aria-hidden="true">*</span></label>
+          <input
+            id="currentPasswordInput"
+            name="current_password"
+            type="password"
+            class="form-input"
+            autocomplete="current-password"
+            required
+          >
+        </div>
+
+        <div class="form-field">
+          <label for="newPasswordInput" class="form-label">Mật khẩu mới (tối thiểu 8 ký tự) <span aria-hidden="true">*</span></label>
+          <input
+            id="newPasswordInput"
+            name="new_password"
+            type="password"
+            class="form-input"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          >
+        </div>
+      </div>
+
+      <div class="modal-actions modal-actions-space">
+        <button id="changePasswordCancelBtn" type="button" class="button secondary">Hủy bỏ</button>
+        <button id="changePasswordSubmitBtn" type="submit" class="button primary glow-btn">Cập nhật mật khẩu</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/control.js?v=15"></script>
 </body>
 </html>

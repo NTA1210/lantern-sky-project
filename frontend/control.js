@@ -74,6 +74,18 @@ const modalMessage = document.querySelector('#modalMessage');
 const modalCancelBtn = document.querySelector('#modalCancelBtn');
 const modalConfirmBtn = document.querySelector('#modalConfirmBtn');
 
+// Elements Auth / Change Password
+const openChangePasswordBtn = document.querySelector('#openChangePasswordBtn');
+const logoutBtn = document.querySelector('#logoutBtn');
+const changePasswordModal = document.querySelector('#changePasswordModal');
+const changePasswordCloseBtn = document.querySelector('#changePasswordCloseBtn');
+const changePasswordCancelBtn = document.querySelector('#changePasswordCancelBtn');
+const changePasswordForm = document.querySelector('#changePasswordForm');
+const changePasswordNotice = document.querySelector('#changePasswordNotice');
+const currentPasswordInput = document.querySelector('#currentPasswordInput');
+const newPasswordInput = document.querySelector('#newPasswordInput');
+const changePasswordSubmitBtn = document.querySelector('#changePasswordSubmitBtn');
+
 const FLICKER_GRACE_PERIOD_MS = 800; // Giữ trạng thái khi mất marker 1-2 frame
 const POST_SCAN_COOLDOWN_MS = 3500;  // Tránh scan liên tục cùng 1 tờ giấy
 
@@ -88,6 +100,8 @@ let latestTotalCount = 0;
 let isSequentialDeleting = false;
 let pendingBackgroundFile = null;
 let pendingBackgroundUrl = null;
+let isRedirectingToLogin = false;
+let isEnvManagedAuth = false;
 
 let currentSettings = {
   conveyor_speed: 1.0,
@@ -97,6 +111,67 @@ let currentSettings = {
   camera_flip_horizontal: false,
   scan_quality_threshold: 65,
 };
+
+function redirectToLogin() {
+  if (isRedirectingToLogin) return;
+  isRedirectingToLogin = true;
+  window.location.assign('/login?next=%2Fcontrol');
+}
+
+async function authFetch(url, options = {}) {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    redirectToLogin();
+    throw new Error('Phiên đăng nhập đã hết hạn.');
+  }
+  return response;
+}
+
+function openModalDialog(dialogEl) {
+  if (!dialogEl) return;
+  const scrollArea = dialogEl.querySelector('.modal-body-scroll');
+  if (scrollArea) scrollArea.scrollTop = 0;
+  if (!dialogEl.open) {
+    dialogEl.showModal();
+  }
+}
+
+function closeModalDialog(dialogEl) {
+  if (dialogEl && dialogEl.open) {
+    dialogEl.close();
+  }
+}
+
+// Fallback light dismiss cho các trình duyệt chưa hỗ trợ thuộc tính closedby="any" (ví dụ Safari)
+if (!('closedBy' in HTMLDialogElement.prototype)) {
+  const isOutsideDialog = (event, dialog) => {
+    const rect = dialog.getBoundingClientRect();
+    return (
+      event.clientX < rect.left
+      || event.clientX > rect.right
+      || event.clientY < rect.top
+      || event.clientY > rect.bottom
+    );
+  };
+  for (const dialog of document.querySelectorAll('dialog[closedby="any"]')) {
+    let pressedOutside = false;
+    dialog.addEventListener('pointerdown', (event) => {
+      pressedOutside = isOutsideDialog(event, dialog);
+    });
+    dialog.addEventListener('pointerup', (event) => {
+      if (pressedOutside && isOutsideDialog(event, dialog)) {
+        dialog.close();
+      }
+      pressedOutside = false;
+    });
+  }
+}
+
+for (const dialog of document.querySelectorAll('dialog.modal-dialog')) {
+  dialog.addEventListener('close', () => {
+    dialog.returnValue = '';
+  });
+}
 
 function message(text, type = '') {
   if (text === lastMessage) return;
@@ -141,12 +216,18 @@ function showConfirm(title, text, onConfirm) {
   modalTitle.textContent = title;
   modalMessage.textContent = text;
   currentModalAction = onConfirm;
-  confirmModal.classList.remove('hidden');
+  openModalDialog(confirmModal);
 }
 
 function hideConfirm() {
-  confirmModal.classList.add('hidden');
+  closeModalDialog(confirmModal);
   currentModalAction = null;
+}
+
+if (confirmModal) {
+  confirmModal.addEventListener('close', () => {
+    currentModalAction = null;
+  });
 }
 
 modalCancelBtn.onclick = hideConfirm;
@@ -159,17 +240,118 @@ modalConfirmBtn.onclick = async () => {
 };
 
 const refreshCamerasBtn = document.querySelector('#refreshCamerasBtn');
+const browserCamToggleBtn = document.querySelector('#browserCamToggleBtn');
+const browserVideo = document.querySelector('#browserVideo');
+const scanUploadInput = document.querySelector('#scanUploadInput');
+
 let isSwitchingCamera = false;
+let useBrowserCamera = false;
+let browserStream = null;
+let browserDetectInFlight = false;
+let browserLastDetectAt = 0;
+let browserCanvas = null;
+
+function stopBrowserCameraStream() {
+  if (browserStream) {
+    for (const track of browserStream.getTracks()) {
+      track.stop();
+    }
+    browserStream = null;
+  }
+  if (browserVideo) {
+    browserVideo.srcObject = null;
+    browserVideo.classList.add('hidden');
+  }
+  cameraWrap.classList.remove('is-browser-cam');
+}
+
+async function populateBrowserCameraDevices(selectedDeviceId = '') {
+  if (!cameraSelect || !navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter((d) => d.kind === 'videoinput');
+    if (!cams.length) return;
+    cameraSelect.innerHTML = cams
+      .map((cam, idx) => {
+        const label = cam.label || `Camera trình duyệt #${idx + 1}`;
+        const selected = cam.deviceId === selectedDeviceId ? ' selected' : '';
+        return `<option value="browser:${cam.deviceId}"${selected}>🌐 ${label}</option>`;
+      })
+      .join('');
+  } catch (_err) {}
+}
+
+async function startBrowserCamera(deviceId = '') {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showToast('Trình duyệt không hỗ trợ Camera trực tiếp (hoặc chưa chạy HTTPS). Hãy dùng nút "Quét từ ảnh".', 'error');
+    return false;
+  }
+  stopBrowserCameraStream();
+  setPreviewState('loading', 'Đang mở Camera trình duyệt', 'Vui lòng cấp quyền truy cập camera trên trình duyệt...');
+
+  const videoConstraints = deviceId
+    ? { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    : { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } };
+
+  try {
+    browserStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+  } catch (_err) {
+    try {
+      browserStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (err) {
+      useBrowserCamera = false;
+      if (browserCamToggleBtn) browserCamToggleBtn.classList.remove('active');
+      setPreviewState('unavailable', 'Không mở được Camera trình duyệt', err.message || 'Kiểm tra quyền camera hoặc dùng "Quét từ ảnh".');
+      showToast('Không thể truy cập camera trình duyệt. Bạn vẫn có thể dùng "Quét từ ảnh".', 'error');
+      return false;
+    }
+  }
+
+  useBrowserCamera = true;
+  if (browserCamToggleBtn) browserCamToggleBtn.classList.add('active');
+  cameraWrap.classList.add('is-browser-cam');
+  if (browserVideo) {
+    browserVideo.srcObject = browserStream;
+    browserVideo.classList.remove('hidden');
+    browserVideo.classList.toggle('mirrored', Boolean(currentSettings.camera_flip_horizontal));
+    await browserVideo.play().catch(() => {});
+  }
+  const activeTrack = browserStream.getVideoTracks()[0];
+  const activeDeviceId = activeTrack?.getSettings()?.deviceId || deviceId;
+  await populateBrowserCameraDevices(activeDeviceId);
+  setPreviewState('ready');
+  stableStartAt = null;
+  lastSeenVariant = null;
+  showToast('Đã bật Camera trình duyệt!', 'success');
+  return true;
+}
+
+async function setBrowserCameraMode(enable) {
+  if (enable) {
+    await startBrowserCamera();
+  } else {
+    useBrowserCamera = false;
+    stopBrowserCameraStream();
+    if (browserCamToggleBtn) browserCamToggleBtn.classList.remove('active');
+    stableStartAt = null;
+    lastSeenVariant = null;
+    await fetchCameras();
+  }
+}
+
+if (browserCamToggleBtn) {
+  browserCamToggleBtn.onclick = () => setBrowserCameraMode(!useBrowserCamera);
+}
 
 async function fetchCameras(showToastOnDone = false) {
-  if (!cameraSelect || isSwitchingCamera) return;
+  if (!cameraSelect || isSwitchingCamera || useBrowserCamera) return;
   try {
-    const res = await fetch('/api/cameras', { cache: 'no-store' });
+    const res = await authFetch('/api/cameras', { cache: 'no-store' });
     if (!res.ok) return;
     const data = await res.json();
     const current = data.current ?? 0;
     const cameras = data.cameras || [];
-    
+
     const optionsHtml = cameras.map((c) => {
       const isSelected = c.index === current ? ' selected' : '';
       return `<option value="${c.index}"${isSelected}>${c.label}</option>`;
@@ -186,7 +368,11 @@ if (refreshCamerasBtn) {
   refreshCamerasBtn.onclick = async () => {
     refreshCamerasBtn.style.transform = 'rotate(360deg)';
     refreshCamerasBtn.style.transition = 'transform 0.4s ease';
-    await fetchCameras(true);
+    if (useBrowserCamera) {
+      await populateBrowserCameraDevices();
+    } else {
+      await fetchCameras(true);
+    }
     setTimeout(() => {
       refreshCamerasBtn.style.transform = 'none';
       refreshCamerasBtn.style.transition = 'none';
@@ -196,13 +382,21 @@ if (refreshCamerasBtn) {
 
 if (cameraSelect) {
   cameraSelect.onchange = async () => {
-    const newIndex = parseInt(cameraSelect.value);
+    const rawVal = String(cameraSelect.value || '');
+    if (rawVal.startsWith('browser:')) {
+      await startBrowserCamera(rawVal.slice('browser:'.length));
+      return;
+    }
+    if (useBrowserCamera) {
+      await setBrowserCameraMode(false);
+    }
+    const newIndex = parseInt(rawVal, 10);
     if (Number.isNaN(newIndex)) return;
     isSwitchingCamera = true;
     message(`Đang chuyển sang Camera #${newIndex}...`);
     showToast(`Đang kết nối Camera #${newIndex}...`, 'info');
     try {
-      const res = await fetch('/api/cameras/select', {
+      const res = await authFetch('/api/cameras/select', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ index: newIndex }),
@@ -301,6 +495,9 @@ function applySettingsToForm(settings) {
   if (cameraFlipToggle) {
     cameraFlipToggle.checked = Boolean(currentSettings.camera_flip_horizontal);
   }
+  if (browserVideo) {
+    browserVideo.classList.toggle('mirrored', Boolean(currentSettings.camera_flip_horizontal));
+  }
   if (autoScanLabel) {
     autoScanLabel.textContent = `Tự động Scan (${Number(currentSettings.auto_scan_seconds).toFixed(1)}s)`;
   }
@@ -308,7 +505,7 @@ function applySettingsToForm(settings) {
 
 async function fetchSettings() {
   try {
-    const res = await fetch('/api/settings', { cache: 'no-store' });
+    const res = await authFetch('/api/settings', { cache: 'no-store' });
     if (res.ok) {
       const data = await res.json();
       applySettingsToForm(data);
@@ -320,11 +517,11 @@ async function fetchSettings() {
 
 function openSettings() {
   applySettingsToForm(currentSettings);
-  settingsModal.classList.remove('hidden');
+  openModalDialog(settingsModal);
 }
 
 function closeSettings() {
-  settingsModal.classList.add('hidden');
+  closeModalDialog(settingsModal);
 }
 
 if (openSettingsBtn) openSettingsBtn.onclick = openSettings;
@@ -346,7 +543,7 @@ if (saveSettingsBtn) {
     saveSettingsBtn.textContent = 'Đang lưu...';
 
     try {
-      const res = await fetch('/api/settings', {
+      const res = await authFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -374,7 +571,7 @@ if (resetSettingsBtn) {
       'Bạn có chắc muốn đưa toàn bộ thông số tốc độ, độ rung lắc và thời gian scan về chuẩn ban đầu?',
       async () => {
         try {
-          const res = await fetch('/api/settings/reset', { method: 'POST' });
+          const res = await authFetch('/api/settings/reset', { method: 'POST' });
           if (res.ok) {
             const data = await res.json();
             applySettingsToForm(data.settings || data);
@@ -394,16 +591,107 @@ if (resetSettingsBtn) {
 // GUIDE MODAL
 // -------------------------------------------------------------
 function openGuide() {
-  guideModal.classList.remove('hidden');
+  openModalDialog(guideModal);
 }
 
 function closeGuide() {
-  guideModal.classList.add('hidden');
+  closeModalDialog(guideModal);
 }
 
 if (openGuideBtn) openGuideBtn.onclick = openGuide;
 if (guideModalCloseBtn) guideModalCloseBtn.onclick = closeGuide;
 if (guideModalDoneBtn) guideModalDoneBtn.onclick = closeGuide;
+
+// -------------------------------------------------------------
+// AUTH & CHANGE PASSWORD MODAL
+// -------------------------------------------------------------
+function setChangePasswordNotice(text = '') {
+  if (!changePasswordNotice) return;
+  changePasswordNotice.textContent = text;
+  changePasswordNotice.classList.toggle('hidden', !text);
+}
+
+function openChangePasswordModal() {
+  if (changePasswordForm) changePasswordForm.reset();
+  setChangePasswordNotice(
+    isEnvManagedAuth
+      ? 'Mật khẩu hiện được quản lý qua biến môi trường (LANTERN_CONTROL_PASSWORD) trên máy chủ.'
+      : ''
+  );
+  if (currentPasswordInput) currentPasswordInput.disabled = isEnvManagedAuth;
+  if (newPasswordInput) newPasswordInput.disabled = isEnvManagedAuth;
+  if (changePasswordSubmitBtn) changePasswordSubmitBtn.disabled = isEnvManagedAuth;
+  openModalDialog(changePasswordModal);
+}
+
+function closeChangePasswordModal() {
+  closeModalDialog(changePasswordModal);
+  if (changePasswordForm) changePasswordForm.reset();
+  setChangePasswordNotice('');
+}
+
+if (openChangePasswordBtn) openChangePasswordBtn.onclick = openChangePasswordModal;
+if (changePasswordCloseBtn) changePasswordCloseBtn.onclick = closeChangePasswordModal;
+if (changePasswordCancelBtn) changePasswordCancelBtn.onclick = closeChangePasswordModal;
+
+if (changePasswordForm) {
+  changePasswordForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setChangePasswordNotice('');
+    if (isEnvManagedAuth) return;
+    if (!changePasswordForm.reportValidity()) return;
+
+    changePasswordSubmitBtn.disabled = true;
+    changePasswordSubmitBtn.textContent = 'Đang cập nhật...';
+
+    try {
+      const res = await authFetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: currentPasswordInput.value,
+          new_password: newPasswordInput.value,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Đổi mật khẩu thất bại.');
+
+      closeChangePasswordModal();
+      showToast('Đã cập nhật mật khẩu đăng nhập Control!', 'success');
+    } catch (err) {
+      setChangePasswordNotice(err.message);
+    } finally {
+      changePasswordSubmitBtn.disabled = isEnvManagedAuth;
+      changePasswordSubmitBtn.textContent = 'Cập nhật mật khẩu';
+    }
+  });
+}
+
+if (logoutBtn) {
+  logoutBtn.onclick = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (_err) {}
+    window.location.assign('/login');
+  };
+}
+
+async function fetchAuthStatus() {
+  try {
+    const res = await fetch('/api/auth/status', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    isEnvManagedAuth = Boolean(data.envManaged);
+    if (data.authDisabled) {
+      if (openChangePasswordBtn) openChangePasswordBtn.style.display = 'none';
+      if (logoutBtn) logoutBtn.style.display = 'none';
+      return;
+    }
+    if (!data.authenticated) {
+      redirectToLogin();
+    }
+  } catch (_err) {}
+}
 
 // -------------------------------------------------------------
 // STAGE BACKGROUND PREVIEW
@@ -464,15 +752,10 @@ backgroundInput.onchange = () => {
     bgModalApplyBtn.disabled = false;
     bgModalApplyBtn.textContent = '✅ Áp Dụng Lên Màn Chiếu';
   }
-  if (bgPreviewModal) {
-    bgPreviewModal.classList.remove('hidden');
-  }
+  openModalDialog(bgPreviewModal);
 };
 
-function closeBgPreviewModal() {
-  if (bgPreviewModal) {
-    bgPreviewModal.classList.add('hidden');
-  }
+function cleanupBgPreviewState() {
   pendingBackgroundFile = null;
   if (pendingBackgroundUrl) {
     URL.revokeObjectURL(pendingBackgroundUrl);
@@ -481,6 +764,14 @@ function closeBgPreviewModal() {
   backgroundInput.value = '';
 }
 
+function closeBgPreviewModal() {
+  closeModalDialog(bgPreviewModal);
+  cleanupBgPreviewState();
+}
+
+if (bgPreviewModal) {
+  bgPreviewModal.addEventListener('close', cleanupBgPreviewState);
+}
 if (bgPreviewModalCloseBtn) bgPreviewModalCloseBtn.onclick = closeBgPreviewModal;
 if (bgModalCancelBtn) bgModalCancelBtn.onclick = closeBgPreviewModal;
 
@@ -495,7 +786,7 @@ if (bgModalApplyBtn) {
     backgroundMessage.className = 'muted small';
 
     try {
-      const response = await fetch('/api/background', {
+      const response = await authFetch('/api/background', {
         method: 'POST',
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
         body: file,
@@ -526,7 +817,7 @@ if (resetBackgroundBtn) {
       'Bạn có muốn xóa ảnh nền tùy chỉnh và quay về nền bầu trời sao mặc định không?',
       async () => {
         try {
-          const res = await fetch('/api/background', { method: 'DELETE' });
+          const res = await authFetch('/api/background', { method: 'DELETE' });
           if (res.ok) {
             setStageBackground(null);
             backgroundMessage.textContent = 'Đã về nền mặc định.';
@@ -547,7 +838,7 @@ if (resetBackgroundBtn) {
 // -------------------------------------------------------------
 async function fetchRecentLanterns() {
   try {
-    const res = await fetch('/api/recent?limit=8', { cache: 'no-store' });
+    const res = await authFetch('/api/recent?limit=8', { cache: 'no-store' });
     if (!res.ok) return;
     const items = await res.json();
     renderRecentGallery(items);
@@ -587,7 +878,7 @@ function renderRecentGallery(items) {
 async function deleteSingleLantern(scanId) {
   try {
     message(`Đang xóa lồng đèn ${scanId}...`);
-    const res = await fetch(`/api/lanterns/${encodeURIComponent(scanId)}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/lanterns/${encodeURIComponent(scanId)}`, { method: 'DELETE' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Xóa thất bại');
     latestTotalCount = data.totalCount ?? 0;
@@ -743,7 +1034,7 @@ async function startSequentialDelete() {
   const qty = getDeleteQuantity();
   try {
     message(qty ? `Đang bắt đầu xóa lần lượt ${qty} lồng đèn (1s/đèn)...` : 'Đang bắt đầu xóa lần lượt từng lồng đèn (1s/đèn)...');
-    const res = await fetch('/api/lanterns/sequential-delete/start', {
+    const res = await authFetch('/api/lanterns/sequential-delete/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ count: qty || null }),
@@ -763,7 +1054,7 @@ async function startSequentialDelete() {
 async function stopSequentialDelete() {
   try {
     message('Đang dừng xóa lần lượt...');
-    const res = await fetch('/api/lanterns/sequential-delete/stop', { method: 'POST' });
+    const res = await authFetch('/api/lanterns/sequential-delete/stop', { method: 'POST' });
     const data = await res.json();
     isSequentialDeleting = false;
     updateDeleteButtonsUI();
@@ -793,7 +1084,7 @@ async function deleteLanternsBatchOrAll() {
   try {
     message(qty ? `Đang xóa ${qty} lồng đèn cũ nhất...` : 'Đang làm mờ và xóa toàn bộ lồng đèn...');
     const url = qty ? `/api/lanterns?count=${qty}` : '/api/lanterns';
-    const res = await fetch(url, { method: 'DELETE' });
+    const res = await authFetch(url, { method: 'DELETE' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Không thể xóa');
     if (Number.isFinite(Number(data.totalCount))) {
@@ -823,33 +1114,71 @@ function updateTotalMeta() {
   }
 }
 
-async function doScan(isAuto = false) {
-  if (isScanning || Date.now() < cooldownUntil) return;
+function captureBrowserFrameBlob(maxWidth = 0, quality = 0.93) {
+  return new Promise((resolve, reject) => {
+    if (!browserVideo || !browserVideo.videoWidth || !browserVideo.videoHeight) {
+      reject(new Error('Camera trình duyệt chưa sẵn sàng.'));
+      return;
+    }
+    const vw = browserVideo.videoWidth;
+    const vh = browserVideo.videoHeight;
+    const scale = maxWidth > 0 && vw > maxWidth ? maxWidth / vw : 1;
+    const tw = Math.max(1, Math.round(vw * scale));
+    const th = Math.max(1, Math.round(vh * scale));
+    if (!browserCanvas) {
+      browserCanvas = document.createElement('canvas');
+    }
+    browserCanvas.width = tw;
+    browserCanvas.height = th;
+    const ctx = browserCanvas.getContext('2d');
+    ctx.save();
+    if (currentSettings.camera_flip_horizontal) {
+      ctx.translate(tw, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(browserVideo, 0, 0, tw, th);
+    ctx.restore();
+    browserCanvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('Không chụp được khung hình.'))),
+      'image/jpeg',
+      quality
+    );
+  });
+}
 
+async function handleScanSuccess(data, isAuto = false) {
+  result.src = `${data.lanternUrl}?t=${Date.now()}`;
+  const label = data.variantLabel ? ` (${data.variantLabel})` : '';
+  const autoNote = isAuto ? ' [Tự động]' : '';
+  message(`Scan thành công${label}${autoNote}! Đã phát sang Display.`, 'success');
+  showToast(`Đã quét thành công lồng đèn${label}!`, 'success');
+  setBadge('Scan OK', 'ready');
+  latestTotalCount = data.totalCount ?? latestTotalCount + 1;
+  updateTotalMeta();
+  await fetchRecentLanterns();
+
+  cooldownUntil = Date.now() + POST_SCAN_COOLDOWN_MS;
+  stableStartAt = null;
+  lastSeenVariant = null;
+}
+
+async function scanImageBlob(blob, isAuto = false) {
+  if (isScanning) return;
   isScanning = true;
   scan.disabled = true;
   setCountdownProgress(0);
   setBadge('Đang xử lý...', 'busy');
-  message(isAuto ? 'Đang tự động chụp và nhận diện ArUco...' : 'Đang chụp và tách nền lồng đèn...');
+  message(isAuto ? 'Đang tự động chụp và nhận diện ArUco...' : 'Đang xử lý và tách nền lồng đèn...');
 
   try {
-    const response = await fetch('/api/scan', { method: 'POST' });
+    const response = await authFetch('/api/scan/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': blob.type || 'image/jpeg' },
+      body: blob,
+    });
     const data = await response.json();
     if (!response.ok) throw Error(data.detail || 'Scan failed');
-
-    result.src = `${data.lanternUrl}?t=${Date.now()}`;
-    const label = data.variantLabel ? ` (${data.variantLabel})` : '';
-    const autoNote = isAuto ? ' [Tự động]' : '';
-    message(`Scan thành công${label}${autoNote}! Đã phát sang Display.`, 'success');
-    showToast(`Đã quét thành công lồng đèn${label}!`, 'success');
-    setBadge('Scan OK', 'ready');
-    latestTotalCount = data.totalCount ?? latestTotalCount + 1;
-    updateTotalMeta();
-    await fetchRecentLanterns();
-
-    cooldownUntil = Date.now() + POST_SCAN_COOLDOWN_MS;
-    stableStartAt = null;
-    lastSeenVariant = null;
+    await handleScanSuccess(data, isAuto);
   } catch (error) {
     message(error.message, 'error');
     showToast(error.message, 'error');
@@ -859,112 +1188,182 @@ async function doScan(isAuto = false) {
   }
 }
 
-async function poll() {
-  if (isScanning) return;
+async function doScan(isAuto = false) {
+  if (isScanning || Date.now() < cooldownUntil) return;
+
+  if (useBrowserCamera) {
+    try {
+      const blob = await captureBrowserFrameBlob(0, 0.94);
+      await scanImageBlob(blob, isAuto);
+    } catch (error) {
+      message(error.message, 'error');
+      showToast(error.message, 'error');
+    }
+    return;
+  }
+
+  isScanning = true;
+  scan.disabled = true;
+  setCountdownProgress(0);
+  setBadge('Đang xử lý...', 'busy');
+  message(isAuto ? 'Đang tự động chụp và nhận diện ArUco...' : 'Đang chụp và tách nền lồng đèn...');
 
   try {
-    const response = await fetch('/api/status', { cache: 'no-store' });
-    if (!response.ok) throw Error('Status unavailable');
-
+    const response = await authFetch('/api/scan', { method: 'POST' });
     const data = await response.json();
-    const requiredIds = Array.isArray(data.requiredMarkerIds) ? data.requiredMarkerIds : [];
-    const found = new Set(data.markerIds || []);
+    if (!response.ok) throw Error(data.detail || 'Scan failed');
+    await handleScanSuccess(data, isAuto);
+  } catch (error) {
+    message(error.message, 'error');
+    showToast(error.message, 'error');
+    setBadge('Error', 'error');
+  } finally {
+    isScanning = false;
+  }
+}
 
-    updateMarkerSlots(requiredIds, found);
+function handleDetectionState(data) {
+  const requiredIds = Array.isArray(data.requiredMarkerIds) ? data.requiredMarkerIds : [];
+  const found = new Set(data.markerIds || []);
 
-    if (!data.cameraOpen) {
-      stableStartAt = null;
-      lastSeenVariant = null;
-      setCountdownProgress(0);
-      scan.disabled = true;
-      scan.innerHTML = '<span class="btn-icon">⚡</span> Scan Lồng Đèn';
-      meta.textContent = `Camera #${data.cameraIndex} (Offline)`;
-      if (templateMeta) templateMeta.textContent = 'Đang tìm thiết bị...';
-      setBadge('Offline', 'error');
-      setPreviewState('unavailable', 'Camera không khả dụng', data.error || 'Kiểm tra cáp kết nối hoặc quyền camera.');
-      message(data.error || 'Camera offline. Kiểm tra kết nối thiết bị.', 'error');
-      return;
-    }
+  updateMarkerSlots(requiredIds, found);
 
-    setPreviewState('ready');
-    const [w, h] = data.resolution || [0, 0];
-    const fps = Number(data.fps || 0).toFixed(1);
-    meta.textContent = `Camera #${data.cameraIndex} · ${w}x${h} · ${fps} fps`;
-    if (templateMeta) {
-      templateMeta.textContent = data.variantLabel
-        ? `Đã nhận diện: ${data.variantLabel} (markers: ${requiredIds.join(', ')})`
-        : 'Đưa template lồng đèn vào khung hình...';
-    }
-
-    const now = Date.now();
-    const autoScanEnabled = autoScanToggle.checked;
-    const autoScanDurationMs = Math.max(500, (currentSettings.auto_scan_seconds || 2.0) * 1000);
-
-    if (now < cooldownUntil) {
-      const waitRemainingSec = Math.ceil((cooldownUntil - now) / 1000);
-      scan.disabled = true;
-      scan.innerHTML = `<span class="btn-icon">⏳</span> Chờ đổi giấy (${waitRemainingSec}s)`;
-      setBadge(`Chờ ${waitRemainingSec}s`, 'busy');
-      setCountdownProgress(0);
-      message(`Vừa scan xong. Vui lòng đổi giấy mới (${waitRemainingSec}s)...`);
-      return;
-    }
-
-    if (data.readyToScan) {
-      lastSeenCompleteAt = now;
-      const currentVariant = data.variant || 'template';
-
-      if (lastSeenVariant !== currentVariant || !stableStartAt) {
-        stableStartAt = now;
-        lastSeenVariant = currentVariant;
-      }
-
-      const elapsed = now - stableStartAt;
-      const progressRatio = Math.min(1, elapsed / autoScanDurationMs);
-      const remainingSec = Math.max(0, ((autoScanDurationMs - elapsed) / 1000).toFixed(1));
-
-      scan.disabled = false;
-
-      if (autoScanEnabled) {
-        setCountdownProgress(progressRatio * 100);
-        setBadge(`Tự scan ${remainingSec}s · ${data.variantLabel || 'Ready'}`, 'ready');
-        scan.innerHTML = `<span class="btn-icon">⚡</span> Scan Ngay (${remainingSec}s)`;
-        message(`Giữ yên giấy! Tự động chụp sau ${remainingSec}s... (hoặc bấm Scan ngay)`, 'success');
-
-        if (elapsed >= autoScanDurationMs) {
-          doScan(true);
-          return;
-        }
-      } else {
-        setCountdownProgress(0);
-        setBadge(`Sẵn sàng · ${data.variantLabel || 'Template'}`, 'ready');
-        scan.innerHTML = '<span class="btn-icon">⚡</span> Scan Lồng Đèn';
-        message(`Đủ marker cho mẫu ${data.variantLabel || ''}. Có thể bấm Scan.`);
-      }
-      return;
-    }
-
-    const timeSinceComplete = lastSeenCompleteAt ? now - lastSeenCompleteAt : Infinity;
-    if (timeSinceComplete < FLICKER_GRACE_PERIOD_MS && stableStartAt && autoScanEnabled) {
-      const elapsed = lastSeenCompleteAt - stableStartAt;
-      const progressRatio = Math.min(1, elapsed / autoScanDurationMs);
-      const remainingSec = Math.max(0.1, ((autoScanDurationMs - elapsed) / 1000).toFixed(1));
-      setCountdownProgress(progressRatio * 100);
-      setBadge(`Đang giữ nét · ${remainingSec}s`, 'ready');
-      message('Đang giữ vị trí... Hãy để phẳng giấy.', '');
-      scan.disabled = false;
-      return;
-    }
-
+  if (!data.cameraOpen) {
     stableStartAt = null;
     lastSeenVariant = null;
     setCountdownProgress(0);
     scan.disabled = true;
     scan.innerHTML = '<span class="btn-icon">⚡</span> Scan Lồng Đèn';
+    meta.textContent = `Camera #${data.cameraIndex} (Offline)`;
+    if (templateMeta) templateMeta.textContent = 'Bấm 🌐 để dùng Camera trình duyệt hoặc 📷 Quét từ ảnh';
+    setBadge('Offline', 'error');
+    setPreviewState('unavailable', 'Camera máy chủ không khả dụng', 'Khi chạy trên VPS, hãy bấm biểu tượng 🌐 ở góc trên để bật Camera trình duyệt hoặc dùng nút "Quét từ ảnh".');
+    message(data.error || 'Chưa có camera máy chủ. Có thể bật Camera trình duyệt (🌐) hoặc Quét từ ảnh (📷).', 'error');
+    return;
+  }
 
-    const foundExpected = requiredIds.filter((id) => found.has(id)).length;
-    setBadge(requiredIds.length ? `Markers ${foundExpected}/4` : 'Tìm template');
-    message('Đặt toàn bộ template trong khung hình và không che bốn marker góc.');
+  setPreviewState('ready');
+  const [w, h] = data.resolution || [0, 0];
+  const fps = Number(data.fps || 0).toFixed(1);
+  meta.textContent = useBrowserCamera
+    ? `Camera trình duyệt · ${w}x${h}`
+    : `Camera #${data.cameraIndex} · ${w}x${h} · ${fps} fps`;
+  if (templateMeta) {
+    templateMeta.textContent = data.variantLabel
+      ? `Đã nhận diện: ${data.variantLabel} (markers: ${requiredIds.join(', ')})`
+      : 'Đưa template lồng đèn vào khung hình...';
+  }
+
+  const now = Date.now();
+  const autoScanEnabled = autoScanToggle.checked;
+  const autoScanDurationMs = Math.max(500, (currentSettings.auto_scan_seconds || 2.0) * 1000);
+
+  if (now < cooldownUntil) {
+    const waitRemainingSec = Math.ceil((cooldownUntil - now) / 1000);
+    scan.disabled = true;
+    scan.innerHTML = `<span class="btn-icon">⏳</span> Chờ đổi giấy (${waitRemainingSec}s)`;
+    setBadge(`Chờ ${waitRemainingSec}s`, 'busy');
+    setCountdownProgress(0);
+    message(`Vừa scan xong. Vui lòng đổi giấy mới (${waitRemainingSec}s)...`);
+    return;
+  }
+
+  if (data.readyToScan) {
+    lastSeenCompleteAt = now;
+    const currentVariant = data.variant || 'template';
+
+    if (lastSeenVariant !== currentVariant || !stableStartAt) {
+      stableStartAt = now;
+      lastSeenVariant = currentVariant;
+    }
+
+    const elapsed = now - stableStartAt;
+    const progressRatio = Math.min(1, elapsed / autoScanDurationMs);
+    const remainingSec = Math.max(0, ((autoScanDurationMs - elapsed) / 1000).toFixed(1));
+
+    scan.disabled = false;
+
+    if (autoScanEnabled) {
+      setCountdownProgress(progressRatio * 100);
+      setBadge(`Tự scan ${remainingSec}s · ${data.variantLabel || 'Ready'}`, 'ready');
+      scan.innerHTML = `<span class="btn-icon">⚡</span> Scan Ngay (${remainingSec}s)`;
+      message(`Giữ yên giấy! Tự động chụp sau ${remainingSec}s... (hoặc bấm Scan ngay)`, 'success');
+
+      if (elapsed >= autoScanDurationMs) {
+        doScan(true);
+        return;
+      }
+    } else {
+      setCountdownProgress(0);
+      setBadge(`Sẵn sàng · ${data.variantLabel || 'Template'}`, 'ready');
+      scan.innerHTML = '<span class="btn-icon">⚡</span> Scan Lồng Đèn';
+      message(`Đủ marker cho mẫu ${data.variantLabel || ''}. Có thể bấm Scan.`);
+    }
+    return;
+  }
+
+  const timeSinceComplete = lastSeenCompleteAt ? now - lastSeenCompleteAt : Infinity;
+  if (timeSinceComplete < FLICKER_GRACE_PERIOD_MS && stableStartAt && autoScanEnabled) {
+    const elapsed = lastSeenCompleteAt - stableStartAt;
+    const progressRatio = Math.min(1, elapsed / autoScanDurationMs);
+    const remainingSec = Math.max(0.1, ((autoScanDurationMs - elapsed) / 1000).toFixed(1));
+    setCountdownProgress(progressRatio * 100);
+    setBadge(`Đang giữ nét · ${remainingSec}s`, 'ready');
+    message('Đang giữ vị trí... Hãy để phẳng giấy.', '');
+    scan.disabled = false;
+    return;
+  }
+
+  stableStartAt = null;
+  lastSeenVariant = null;
+  setCountdownProgress(0);
+  scan.disabled = true;
+  scan.innerHTML = '<span class="btn-icon">⚡</span> Scan Lồng Đèn';
+
+  const foundExpected = requiredIds.filter((id) => found.has(id)).length;
+  setBadge(requiredIds.length ? `Markers ${foundExpected}/4` : 'Tìm template');
+  message('Đặt toàn bộ template trong khung hình và không che bốn marker góc.');
+}
+
+async function poll() {
+  if (isScanning) return;
+
+  if (useBrowserCamera) {
+    const now = Date.now();
+    if (browserDetectInFlight || now - browserLastDetectAt < 320) return;
+    if (!browserVideo || !browserVideo.videoWidth) return;
+    browserDetectInFlight = true;
+    browserLastDetectAt = now;
+    try {
+      const previewBlob = await captureBrowserFrameBlob(720, 0.75);
+      const response = await authFetch('/api/scan/detect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg' },
+        body: previewBlob,
+      });
+      if (!response.ok) throw Error('Detect unavailable');
+      const detectedData = await response.json();
+      handleDetectionState({
+        ...detectedData,
+        cameraOpen: true,
+        cameraIndex: 'browser',
+        resolution: [browserVideo.videoWidth, browserVideo.videoHeight],
+        fps: 0,
+      });
+    } catch (_error) {
+      // Keep preview stream open if a transient frame detect fails
+    } finally {
+      browserDetectInFlight = false;
+    }
+    return;
+  }
+
+  try {
+    const response = await authFetch('/api/status', { cache: 'no-store' });
+    if (!response.ok) throw Error('Status unavailable');
+
+    const data = await response.json();
+    handleDetectionState(data);
   } catch (error) {
     stableStartAt = null;
     setCountdownProgress(0);
@@ -978,11 +1377,20 @@ async function poll() {
   }
 }
 
+if (scanUploadInput) {
+  scanUploadInput.onchange = async () => {
+    const file = scanUploadInput.files && scanUploadInput.files[0];
+    if (!file) return;
+    scanUploadInput.value = '';
+    await scanImageBlob(file, false);
+  };
+}
+
 scan.onclick = () => doScan(false);
 
 demo.onclick = async () => {
   try {
-    const response = await fetch('/api/demo', { method: 'POST' });
+    const response = await authFetch('/api/demo', { method: 'POST' });
     if (!response.ok) throw Error('Demo failed');
     message('Đã gửi demo lantern sang Display.', 'success');
     showToast('Đã gửi lồng đèn Demo sang màn hình chiếu!', 'info');
@@ -991,6 +1399,7 @@ demo.onclick = async () => {
   }
 };
 
+fetchAuthStatus();
 connectControlWs();
 fetchCameras();
 fetchRecentLanterns();

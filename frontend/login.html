@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Đăng Nhập Control — Phố Đèn Ký Ức</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="alternate icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=14">
+</head>
+<body class="control-page login-page">
+  <div class="ambient-glow ambient-1"></div>
+  <div class="ambient-glow ambient-2"></div>
+
+  <main class="login-shell">
+    <section class="panel glass-panel login-card" aria-labelledby="loginTitle">
+      <div class="login-brand">
+        <div class="brand-logo">🏮</div>
+        <div>
+          <span class="eyebrow">PHỐ ĐÈN KÝ ỨC</span>
+          <h1 id="loginTitle" class="login-title">Đăng Nhập Control</h1>
+        </div>
+      </div>
+
+      <p class="muted small login-subtitle">
+        Khu vực điều khiển camera, quét lồng đèn và quản lý màn hình chiếu. Vui lòng xác thực trước khi truy cập.
+      </p>
+
+      <div id="loginError" class="login-alert hidden" role="alert" aria-live="polite"></div>
+
+      <form id="loginForm" class="login-form" action="/api/auth/login" method="POST">
+        <input type="hidden" id="nextInput" name="next" value="/control">
+
+        <div class="form-field">
+          <label for="username" class="form-label">Tên đăng nhập <span aria-hidden="true">*</span></label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            class="form-input"
+            autocomplete="username"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            enterkeyhint="next"
+            required
+            autofocus
+          >
+        </div>
+
+        <div class="form-field">
+          <label for="password" class="form-label">Mật khẩu <span aria-hidden="true">*</span></label>
+          <div class="password-input-wrap">
+            <input
+              id="password"
+              name="password"
+              type="password"
+              class="form-input password-input"
+              autocomplete="current-password"
+              enterkeyhint="done"
+              required
+            >
+            <button
+              id="togglePasswordBtn"
+              type="button"
+              class="password-toggle-btn"
+              aria-pressed="false"
+              aria-label="Hiện mật khẩu"
+              title="Hiện / Ẩn mật khẩu"
+            >👁</button>
+          </div>
+        </div>
+
+        <button id="loginSubmitBtn" type="submit" class="button primary glow-btn full-w-btn login-submit-btn">
+          Đăng nhập
+        </button>
+      </form>
+
+      <div class="login-footer">
+        <a href="/display" class="login-display-link">Mở Màn Hình Chiếu (/display) ↗</a>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/login.js?v=1"></script>
+</body>
+</html>
+

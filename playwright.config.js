@@ -39,6 +39,8 @@ module.exports = defineConfig({
       LANTERN_NO_BROWSER: '1',
       LANTERN_DISABLE_CAMERA: '1',
       LANTERN_RUNTIME_DIR: 'runtime/e2e',
+      LANTERN_CONTROL_USER: 'e2e_admin',
+      LANTERN_CONTROL_PASSWORD: 'e2e_secret_password_123',
     },
   },
 });

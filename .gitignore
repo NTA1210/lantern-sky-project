@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.env
 
 # Node / browser E2E
 node_modules/
