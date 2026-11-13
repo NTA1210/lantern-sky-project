@@ -312,8 +312,13 @@ async function populateBrowserCameraDevices(selectedDeviceId = '') {
 }
 
 async function startBrowserCamera(deviceId = '') {
+  const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   if (!navigator.mediaDevices?.getUserMedia) {
-    showToast('Trình duyệt không hỗ trợ Camera trực tiếp (hoặc chưa chạy HTTPS). Hãy dùng nút "Quét từ ảnh".', 'error');
+    const errorMsg = !isSecure
+      ? 'Trình duyệt Windows/Chrome chặn camera qua HTTP (IP mạng LAN). Khi deploy lên VPS có HTTPS (hoặc localhost) sẽ hoạt động 100%! Hiện tại hãy dùng nút "Quét từ ảnh".'
+      : 'Trình duyệt không hỗ trợ Camera trực tiếp. Hãy kiểm tra quyền hoặc dùng nút "Quét từ ảnh".';
+    showToast(errorMsg, 'error');
+    setPreviewState('unavailable', 'Camera bị chặn', errorMsg);
     return false;
   }
   stopBrowserCameraStream();
@@ -331,8 +336,16 @@ async function startBrowserCamera(deviceId = '') {
     } catch (err) {
       useBrowserCamera = false;
       if (browserCamToggleBtn) browserCamToggleBtn.classList.remove('active');
-      setPreviewState('unavailable', 'Không mở được Camera trình duyệt', err.message || 'Kiểm tra quyền camera hoặc dùng "Quét từ ảnh".');
-      showToast('Không thể truy cập camera trình duyệt. Bạn vẫn có thể dùng "Quét từ ảnh".', 'error');
+      let friendlyDetail = err.message || 'Kiểm tra quyền camera hoặc dùng "Quét từ ảnh".';
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        friendlyDetail = 'Quyền Camera bị từ chối. Hãy kiểm tra cài đặt Quyền riêng tư của Windows (Settings > Privacy > Camera) hoặc bấm vào biểu tượng ổ khóa cạnh URL để Cho phép (Allow).';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        friendlyDetail = 'Camera đang bị ứng dụng khác chiếm giữ (Zoom, Teams, Zalo...). Hãy tắt các ứng dụng đang dùng camera và thử lại.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        friendlyDetail = 'Không tìm thấy thiết bị camera nào trên máy tính.';
+      }
+      setPreviewState('unavailable', 'Không mở được Camera trình duyệt', friendlyDetail);
+      showToast(friendlyDetail, 'error');
       return false;
     }
   }
