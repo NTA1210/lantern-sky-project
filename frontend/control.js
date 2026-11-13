@@ -184,7 +184,37 @@ function setPreviewState(state, title, detail) {
   cameraWrap.classList.toggle('is-loading', state === 'loading');
   cameraWrap.classList.toggle('is-unavailable', state === 'unavailable');
   if (title) {
-    cameraEmpty.innerHTML = `<div class="empty-spinner"></div><strong>${title}</strong><span>${detail || ''}</span>`;
+    const isUnavailable = state === 'unavailable';
+    const actionHtml = isUnavailable
+      ? `<div class="camera-empty-actions" style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;justify-content:center;pointer-events:auto;">
+           <button type="button" class="button button-accent button-sm" id="emptyCamToggleBtn">🌐 Bật Camera máy này</button>
+           <button type="button" class="button button-secondary button-sm" id="emptyUploadBtn">📷 Quét từ ảnh</button>
+         </div>`
+      : '';
+    cameraEmpty.innerHTML = `
+      ${isUnavailable ? '<span style="font-size:32px;line-height:1;margin-bottom:2px;">📷</span>' : '<div class="empty-spinner"></div>'}
+      <strong>${title}</strong>
+      <span>${detail || ''}</span>
+      ${actionHtml}
+    `;
+    if (isUnavailable) {
+      const toggleBtn = cameraEmpty.querySelector('#emptyCamToggleBtn');
+      const uploadBtn = cameraEmpty.querySelector('#emptyUploadBtn');
+      if (toggleBtn) {
+        toggleBtn.onclick = (e) => {
+          e.stopPropagation();
+          if (browserCamToggleBtn) {
+            browserCamToggleBtn.click();
+          }
+        };
+      }
+      if (uploadBtn && scanUploadInput) {
+        uploadBtn.onclick = (e) => {
+          e.stopPropagation();
+          scanUploadInput.click();
+        };
+      }
+    }
   }
 }
 
